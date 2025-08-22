@@ -5,245 +5,279 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>病院在庫管理</title>
   <style>
+    :root { --gap: 12px; }
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; padding: 16px; line-height: 1.6; }
-    .row { margin-bottom: 12px; }
-    .code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: #f5f5f7; padding: 8px; border-radius: 6px; white-space: pre-wrap; }
-    .btn { padding: 10px 14px; border: 1px solid #ddd; border-radius: 8px; background: #fafafa; cursor: pointer; }
-    .btn:active { transform: translateY(1px); }
-    #result { margin-top: 12px; }
-    #debug { margin-top: 20px; }
-    .grid { display: grid; gap: 8px; }
-    .grid2 { grid-template-columns: 1fr auto auto; align-items: center; }
+    h1 { font-size: 28px; margin: 8px 0 16px; }
+    .row { margin-bottom: var(--gap); }
     .muted { color: #666; }
     .ok { color: #0a7b27; font-weight: 600; }
     .err { color: #b00020; font-weight: 600; }
+    .code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: #f5f5f7; padding: 2px 6px; border-radius: 4px; }
+    .btn { padding: 10px 14px; border: 1px solid #ddd; border-radius: 8px; background: #fafafa; cursor: pointer; }
+    .btn:active { transform: translateY(1px); }
+    .btn.primary { background: #1a73e8; border-color: #1a73e8; color: #fff; }
+    .btn.warn { background: #ffe9e9; border-color: #f3b4b4; color: #b00020; }
+    input[type="text"]{ width: 100%; padding: 10px; font-size: 16px; box-sizing: border-box; }
+    .grid { display: grid; gap: 10px; }
+    .item { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; padding: 10px; border: 1px solid #eee; border-radius: 10px; }
+    .stock.badge { min-width: 64px; text-align: center; padding: 6px 8px; border-radius: 999px; border: 1px solid #ddd; background: #f7f7f9; font-weight: 700; }
+    .stock.badge.low { background: #fff8e1; border-color: #ffe082; }
+    .stock.badge.zero { background: #ffebee; border-color: #ffcdd2; color: #b00020; }
+    details summary { cursor: pointer; }
+    #result-empty { padding: 8px 0; }
   </style>
 </head>
 <body>
   <h1>病院在庫管理</h1>
 
   <div class="row">
-    <label>バーコード（code）</label><br />
-    <input id="codeInput" type="text" style="width: 100%; padding: 10px; font-size: 16px;" placeholder="例: 4901777018686" />
+    <label for="codeInput">バーコード（code）</label><br />
+    <input id="codeInput" type="text" inputmode="numeric" placeholder="例: 4901070303885" autocomplete="off" />
   </div>
-
   <div class="row">
-    <button class="btn" id="searchBtn">検索</button>
+    <button class="btn primary" id="searchBtn">検索</button>
   </div>
 
   <div id="status" class="row muted"></div>
 
   <div id="result" class="grid"></div>
 
-  <div id="debug">
+  <div id="debug" class="row">
     <details>
       <summary>デバッグ（生レスポンス表示）</summary>
-      <div class="code" id="debugRaw"></div>
+      <pre id="debugRaw" class="code" style="white-space: pre-wrap;"></pre>
     </details>
   </div>
 
   <script>
-    // ★ ここを書き換えてください ★
-    const GAS_ENDPOINT = 'https://script.google.com/macros/s/AKfycbwEqcAjFzoNGFWhCEhcjZ5SCQLTR9T8pxMJmlQE3gvZW0s1MSgpUFdrU--bqaHbfeXc/exec'; // 例: https://script.google.com/macros/s/AKfycb.../exec
+    // ★ ここをあなたのGAS本番URL (/exec) に差し替え
+    const GAS_ENDPOINT = 'https://script.google.com/macros/s/AKfycbwEqcAjFzoNGFWhCEhcjZ5SCQLTR9T8pxMJmlQE3gvZW0s1MSgpUFdrU--bqaHbfeXc/exec';
 
-    // クエリ取得
+    // --- ユーティリティ ---
+    const qs = (sel, el=document) => el.querySelector(sel);
+
     function getQueryParam(name) {
       const params = new URLSearchParams(location.search);
       return params.get(name) || '';
     }
 
-    // 受けた "何か" を「配列」に変換する超寛容ヘルパー
+    // 何が来ても「配列」に正規化
     function toListArray(anything) {
       try {
-        // 1) null / undefined
         if (anything == null) return [];
-
-        // 2) 文字列なら、JSON の可能性を先に試す
         if (typeof anything === 'string') {
-          const trimmed = anything.trim();
-          if (trimmed === '') return [];
-          try {
-            const parsed = JSON.parse(trimmed);
-            return toListArray(parsed); // 再帰で正規化
-          } catch {
-            // 純粋な文字列しか来ていない場合は「1要素配列」として返す
-            return [trimmed];
-          }
+          const t = anything.trim();
+          if (!t) return [];
+          try { return toListArray(JSON.parse(t)); } catch { return [t]; }
         }
-
-        // 3) すでに Array
         if (Array.isArray(anything)) return anything;
-
-        // 4) オブジェクトの場合：よくあるキーを順に当てにいく
         if (typeof anything === 'object') {
-          // お約束のキー群
-          const candidateKeys = ['list', 'items', 'data', 'results', 'rows', 'records'];
-          for (const key of candidateKeys) {
-            if (Array.isArray(anything[key])) return anything[key];
-          }
-          // list が単体オブジェクトのことも
-          if (anything.list && typeof anything.list === 'object' && !Array.isArray(anything.list)) {
-            return [anything.list];
-          }
-          // 単一レコードっぽいオブジェクトは 1要素配列に
+          const cand = ['list','items','data','results','rows','records'];
+          for (const k of cand) if (Array.isArray(anything[k])) return anything[k];
+          if (anything.list && typeof anything.list === 'object' && !Array.isArray(anything.list)) return [anything.list];
           return [anything];
         }
-
-        // 5) それ以外（数値や真偽値など）は 1要素配列に
         return [anything];
-      } catch (err) {
-        console.error('toListArray error:', err);
-        return [];
-      }
+      } catch { return []; }
     }
 
-    // 共通：デバッグ表示
     function showDebug(raw) {
-      const el = document.getElementById('debugRaw');
-      try {
-        el.textContent = typeof raw === 'string' ? raw : JSON.stringify(raw, null, 2);
-      } catch {
-        el.textContent = String(raw);
-      }
+      const el = qs('#debugRaw');
+      try { el.textContent = typeof raw === 'string' ? raw : JSON.stringify(raw, null, 2); }
+      catch { el.textContent = String(raw); }
     }
 
-    // 共通：ステータス表示
-    function setStatus(text, isError = false) {
-      const el = document.getElementById('status');
+    function setStatus(text, type='muted') {
+      const el = qs('#status');
       el.textContent = text || '';
-      el.className = isError ? 'row err' : 'row muted';
+      el.className = `row ${type === 'err' ? 'err' : type === 'ok' ? 'ok' : 'muted'}`;
     }
 
-    // 結果描画
+    // --- レンダリング ---
+    function renderEmpty(code) {
+      const box = qs('#result');
+      box.innerHTML = `
+        <div id="result-empty" class="muted">該当データがありません。</div>
+        <div>
+          <button id="createBtn" class="btn">在庫0で新規作成</button>
+        </div>
+      `;
+      // “在庫0で新規作成”
+      qs('#createBtn').onclick = async () => {
+        await ensureItemZero(code);
+      };
+    }
+
+    function stockBadgeClass(stock) {
+      if (!isFinite(stock) || stock <= 0) return 'stock badge zero';
+      if (stock <= 2) return 'stock badge low';
+      return 'stock badge';
+    }
+
     function renderList(list) {
-      const box = document.getElementById('result');
+      const box = qs('#result');
       box.innerHTML = '';
       if (!list || list.length === 0) {
-        box.innerHTML = '<div class="muted">該当データがありません。</div>';
+        renderEmpty(qs('#codeInput').value.trim());
         return;
       }
-      list.forEach(item => {
+      for (const item of list) {
         const code = item.code ?? '';
         const name = item.name ?? '';
         const stock = Number(item.stock ?? 0);
 
-        const row = document.createElement('div');
-        row.className = 'grid grid2';
-        row.innerHTML = `
+        const wrap = document.createElement('div');
+        wrap.className = 'item';
+        wrap.innerHTML = `
           <div>
             <div><strong>${name || '(名称未設定)'}</strong></div>
             <div class="muted">code: <span class="code">${code}</span></div>
           </div>
-          <div>在庫: <strong>${isFinite(stock) ? stock : 0}</strong></div>
+          <div class="${stockBadgeClass(stock)}" data-stock="${isFinite(stock) ? stock : 0}">${isFinite(stock) ? stock : 0}</div>
           <div>
             <button class="btn" data-delta="-1" data-code="${code}">-1</button>
             <button class="btn" data-delta="+1" data-code="${code}">+1</button>
           </div>
         `;
-        box.appendChild(row);
-      });
+        box.appendChild(wrap);
 
-      // クリック委譲で +1/-1
-      box.addEventListener('click', async (ev) => {
+        // “マイナス禁止”のフロント防御：0以下なら -1 を無効化
+        const minusBtn = wrap.querySelector('button[data-delta="-1"]');
+        if ((isFinite(stock) ? stock : 0) <= 0) {
+          minusBtn.disabled = true;
+          minusBtn.classList.add('warn');
+        }
+      }
+
+      // クリック委譲（再描画のたびに1回）
+      box.onclick = async (ev) => {
         const btn = ev.target.closest('button.btn');
         if (!btn) return;
         const code = btn.getAttribute('data-code');
         const delta = parseFloat(btn.getAttribute('data-delta'));
+        // 表示上の在庫を見て 0 未満にならないよう防御
+        const stockEl = btn.closest('.item').querySelector('.stock.badge, .stock.badge.low, .stock.badge.zero');
+        const current = Number(stockEl?.dataset.stock ?? 0);
+        if (delta < 0 && current <= 0) {
+          setStatus('在庫はこれ以上減らせません（0未満禁止）', 'err');
+          return;
+        }
         await adjustStock(code, delta);
-      }, { once: true }); // 一度だけバインド（再描画時に再バインド）
+      };
     }
 
-    // 検索
+    // --- API 呼び出し ---
+    async function fetchText(url, opts) {
+      const res = await fetch(url, opts);
+      return await res.text();
+    }
+
     async function doSearch(code) {
       if (!GAS_ENDPOINT || GAS_ENDPOINT.includes('YOUR_GAS_WEBAPP_URL')) {
-        setStatus('GAS の URL（GAS_ENDPOINT）を設定してください。', true);
+        setStatus('GAS の URL（GAS_ENDPOINT）を設定してください。', 'err');
         return;
       }
       if (!code) {
-        setStatus('code が空です。バーコードを読み取ってください。', true);
+        setStatus('code が空です。バーコードを読み取ってください。', 'err');
         return;
       }
-
       try {
         setStatus('検索中…');
         const url = `${GAS_ENDPOINT}?mode=search&code=${encodeURIComponent(code)}`;
-        const res = await fetch(url, { method: 'GET' });
-        const text = await res.text();     // まず text で取得（文字列返却や HTML 化にも耐える）
+        const text = await fetchText(url, { method: 'GET' });
         showDebug(text);
 
-        let json;
-        try {
-          json = JSON.parse(text);
-        } catch {
-          // JSON じゃなくても toListArray で最低限処理可能
-          json = text;
-        }
-
-        // ★ どんな形でも list 配列を取り出す（なければ配列化）
+        let json; try { json = JSON.parse(text); } catch { json = text; }
         const list = toListArray(json);
         renderList(list);
 
-        // ok / error 表示（もしあれば）
-        if (json && typeof json === 'object') {
-          if (json.ok === false) {
-            setStatus(json.error ? `検索失敗: ${json.error}` : '検索失敗', true);
-          } else {
-            setStatus(`検索完了（${list.length}件）`);
-          }
+        if (json && typeof json === 'object' && json.ok === false) {
+          setStatus(json.error ? `検索失敗: ${json.error}` : '検索失敗', 'err');
         } else {
           setStatus(`検索完了（${list.length}件）`);
         }
       } catch (err) {
         console.error(err);
-        setStatus('通信エラーが発生しました。', true);
+        setStatus('通信エラーが発生しました。', 'err');
       }
     }
 
-    // 在庫加減算
     async function adjustStock(code, delta) {
       try {
         setStatus(`在庫を ${delta > 0 ? '+' : ''}${delta} します…`);
         const url = `${GAS_ENDPOINT}?mode=adjust&code=${encodeURIComponent(code)}&delta=${encodeURIComponent(delta)}`;
-        const res = await fetch(url, { method: 'GET' });
-        const text = await res.text();
+        const text = await fetchText(url, { method: 'GET' });
         showDebug(text);
 
-        let json;
-        try { json = JSON.parse(text); } catch { json = text; }
+        let json; try { json = JSON.parse(text); } catch { json = text; }
         const list = toListArray(json);
         renderList(list);
 
-        if (json && typeof json === 'object') {
-          if (json.ok === false) {
-            setStatus(json.error ? `更新失敗: ${json.error}` : '更新失敗', true);
-          } else {
-            setStatus('在庫を更新しました。');
-          }
+        if (json && typeof json === 'object' && json.ok === false) {
+          setStatus(json.error ? `更新失敗: ${json.error}` : '更新失敗', 'err');
         } else {
-          setStatus('在庫を更新しました。');
+          setStatus('在庫を更新しました。', 'ok');
         }
       } catch (err) {
         console.error(err);
-        setStatus('在庫更新時に通信エラーが発生しました。', true);
+        setStatus('在庫更新時に通信エラーが発生しました。', 'err');
       }
     }
 
-    // 初期化：query の code を拾って検索
+    // 未ヒット時の「在庫0で新規作成」
+    // 1) サーバが“searchで自動作成”対応なら、search後に1件返る想定
+    // 2) 未対応でも確実に作るために、adjust(+1)→adjust(-1) の二段技で0登録
+    async function ensureItemZero(code) {
+      try {
+        setStatus('在庫0で新規作成しています…');
+        // まず +1 でレコードを作る
+        const addUrl = `${GAS_ENDPOINT}?mode=adjust&code=${encodeURIComponent(code)}&delta=1`;
+        let text = await fetchText(addUrl, { method: 'GET' });
+        showDebug(text);
+        // 続けて -1 で 0 に戻す（サーバ側で“0未満禁止”でもOK）
+        const subUrl = `${GAS_ENDPOINT}?mode=adjust&code=${encodeURIComponent(code)}&delta=-1`;
+        text = await fetchText(subUrl, { method: 'GET' });
+        showDebug(text);
+
+        let json; try { json = JSON.parse(text); } catch { json = text; }
+        const list = toListArray(json);
+        renderList(list);
+        setStatus('新規作成しました（在庫0）', 'ok');
+      } catch (err) {
+        console.error(err);
+        setStatus('新規作成に失敗しました。', 'err');
+      }
+    }
+
+    // --- 初期化 ---
     (function init() {
-      const code = getQueryParam('code');
-      const input = document.getElementById('codeInput');
-      input.value = code || '';
-      document.getElementById('searchBtn').addEventListener('click', () => {
+      const input = qs('#codeInput');
+      const btn = qs('#searchBtn');
+
+      // Enterで検索
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') btn.click();
+      });
+
+      // クリックで検索
+      btn.addEventListener('click', () => {
         doSearch(input.value.trim());
       });
 
+      // 初回フォーカス
+      setTimeout(() => input.focus(), 0);
+
+      // URLクエリからの自動検索
+      const code = getQueryParam('code');
       if (code) {
+        input.value = code;
         doSearch(code);
       }
     })();
   </script>
 </body>
 </html>
+
 
 
 
