@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>病院在庫管理</title>
+  <title>病院在庫管理（Firestoreリアルタイム）</title>
   <style>
     :root { --gap: 12px; }
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; padding: 16px; line-height: 1.6; }
@@ -43,92 +43,135 @@
   </div>
 
   <div id="status" class="row muted"></div>
-
   <div id="result" class="grid"></div>
 
-  <div id="debug" class="row">
-    <details>
-      <summary>デバッグ（生レスポンス表示）</summary>
-      <pre id="debugRaw" class="code" style="white-space: pre-wrap;"></pre>
-    </details>
-  </div>
+  <script type="module">
+    // ===== Firebase SDK（CDN, v10） =====
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
+    import { getAuth, signInAnonymously, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+    import {
+      getFirestore, doc, getDoc, setDoc, updateDoc,
+      serverTimestamp, increment, onSnapshot
+    } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
-  <script>
-    // ===== 設定 =====
-    // ★ あなたのGASウェブアプリ（/exec）URLに置き換えてください
-    const GAS_ENDPOINT = 'https://script.google.com/macros/s/AKfycbxv2nFvbccWU1BZXpOKjKxi89Q14XLaVgxKlSwVcH_kgg7Hgnu47G6XRxZHCJo_YHkj/exec';
+    // ===== ここをあなたの値に置き換え =====
+    const firebaseConfig = {
+      apiKey: "AIzaSyCRnAspbEzPYutUF1QUxO91emipsK3ogNk",
+      authDomain: "YOUR_PROJECT.firebaseapp.com",
+      projectId: "YOUR_PROJECT_ID",
+      appId: "YOUR_APP_ID",
+    };
 
-    // （任意）iOSショートカット起動
+    // ===== iOS ショートカット設定（任意） =====
     const SHORTCUT_NAME = 'ScanToWeb';
     const RETURN_BASE_URL = location.origin + location.pathname;
-
-    // ===== ユーティリティ =====
-    const qs = (sel, el=document) => el.querySelector(sel);
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
 
-    function getQueryParam(name) {
-      const params = new URLSearchParams(location.search);
-      return params.get(name) || '';
-    }
-    function showDebug(raw) {
-      const el = qs('#debugRaw');
-      try { el.textContent = typeof raw === 'string' ? raw : JSON.stringify(raw, null, 2); }
-      catch { el.textContent = String(raw); }
-    }
+    // ===== UIユーティリティ =====
+    const qs = (s, el=document) => el.querySelector(s);
     function setStatus(text, type='muted') {
-      const el = qs('#status');
-      el.textContent = text || '';
-      el.className = `row ${type === 'err' ? 'err' : type === 'ok' ? 'ok' : 'muted'}`;
+      const el = qs('#status'); el.textContent = text || '';
+      el.className = `row ${type==='err'?'err':type==='ok'?'ok':'muted'}`;
     }
-    function refocus() {
-      const input = qs('#codeInput');
-      setTimeout(() => { input.focus(); input.select(); }, 0);
-    }
-
-    // ===== レンダリング =====
-    let currentCode = ''; // 今表示しているcode（差分同期で自動更新に使う）
-
-    function renderEmpty(code) {
-      const box = qs('#result');
-      box.innerHTML = `
-        <div id="result-empty" class="muted">該当データがありません。</div>
-        <div>
-          <button id="createBtn" class="btn">在庫0で新規作成</button>
-        </div>
-      `;
-      qs('#createBtn').onclick = async () => {
-        try {
-          await client.adjust(code, +1);
-          await client.adjust(code, -1);
-          const rec = await client.get(code);
-          renderList(rec ? [rec] : []);
-          setStatus('新規作成しました（在庫0）', 'ok');
-        } catch {
-          setStatus('新規作成に失敗しました。', 'err');
-        } finally {
-          refocus();
-        }
-      };
-    }
-
+    function refocus(){ const i = qs('#codeInput'); setTimeout(()=>{ i.focus(); i.select(); }, 0); }
     function stockBadgeClass(stock) {
       if (!isFinite(stock) || stock <= 0) return 'stock badge zero';
       if (stock <= 2) return 'stock badge low';
       return 'stock badge';
     }
 
-    function renderList(list) {
+    // ===== Firestore クライアント =====
+    function createFirestoreClient() {
+      const app  = initializeApp(firebaseConfig);
+      const auth = getAuth(app);
+      const db   = getFirestore(app);
+
+      let currentUnsub = null;   // 現在表示中 code の onSnapshot
+      const cache = new Map();   // code -> record（UI即時用・任意）
+
+      async function signIn() {
+        await new Promise((resolve, reject)=>{
+          const off = onAuthStateChanged(auth, (u)=>{
+            off();
+            if (u) return resolve();
+            signInAnonymously(auth).then(()=>resolve()).catch(reject);
+          }, reject);
+        });
+      }
+
+      function subscribeRecord(code, onChange){
+        // 現在の購読を外す
+        if (currentUnsub) { currentUnsub(); currentUnsub = null; }
+        if (!code) return;
+
+        const ref = doc(db, 'inventory', String(code));
+        currentUnsub = onSnapshot(ref, snap => {
+          if (snap.exists()) {
+            const data = snap.data();
+            const rec = { code: String(code), name: data.name || '', stock: Number(data.stock || 0), updated_at: data.updated_at };
+            cache.set(String(code), rec);
+            onChange(rec);
+          } else {
+            onChange(null);
+          }
+        });
+      }
+
+      async function get(code){
+        const k = String(code);
+        if (cache.has(k)) return cache.get(k);
+        const ref = doc(db, 'inventory', k);
+        const s = await getDoc(ref);
+        if (s.exists()) {
+          const d = s.data();
+          const rec = { code: k, name: d.name || '', stock: Number(d.stock || 0), updated_at: d.updated_at };
+          cache.set(k, rec);
+          return rec;
+        }
+        return null;
+      }
+
+      async function ensureAndAdjust(code, delta){
+        const k = String(code);
+        const ref = doc(db, 'inventory', k);
+        // 存在しない場合は作成（stock は 0、name は空）
+        await setDoc(ref, { name: '', stock: increment(0), updated_at: serverTimestamp() }, { merge: true });
+        // 加減算（原子的インクリメント）
+        await updateDoc(ref, { stock: increment(delta), updated_at: serverTimestamp() });
+      }
+
+      return { signIn, subscribeRecord, get, ensureAndAdjust };
+    }
+
+    // ===== 画面描画 =====
+    let currentCode = '';
+
+    function renderEmpty(code, client) {
+      const box = qs('#result');
+      box.innerHTML = `
+        <div id="result-empty" class="muted">該当データがありません。</div>
+        <div><button id="createBtn" class="btn">在庫0で新規作成</button></div>
+      `;
+      qs('#createBtn').onclick = async () => {
+        try {
+          // +1 → -1 で 0 を作る（setDoc + increment でもOK）
+          await client.ensureAndAdjust(code, +1);
+          await client.ensureAndAdjust(code, -1);
+          setStatus('新規作成しました（在庫0）', 'ok');
+        } catch (e) {
+          setStatus('新規作成に失敗しました。', 'err');
+        } finally { refocus(); }
+      };
+    }
+
+    function renderRecord(rec, client) {
       const box = qs('#result');
       box.innerHTML = '';
-      if (!list || list.length === 0) {
-        renderEmpty(qs('#codeInput').value.trim());
-        return;
-      }
-      const item = list[0];
-      const code = item.code ?? '';
-      const name = item.name ?? '';
-      const stock = Number(item.stock ?? 0);
-      currentCode = String(code);
+      if (!rec) { renderEmpty(currentCode, client); return; }
+
+      const code = rec.code ?? '';
+      const name = rec.name ?? '';
+      const stock = Number(rec.stock ?? 0);
 
       const wrap = document.createElement('div');
       wrap.className = 'item';
@@ -146,207 +189,91 @@
       box.appendChild(wrap);
 
       const minusBtn = wrap.querySelector('button[data-delta="-1"]');
-      if ((isFinite(stock) ? stock : 0) <= 0) {
-        minusBtn.disabled = true;
-        minusBtn.classList.add('warn');
-      }
+      if ((isFinite(stock) ? stock : 0) <= 0) { minusBtn.disabled = true; minusBtn.classList.add('warn'); }
 
-      // クリック委譲
       box.onclick = async (ev) => {
         const btn = ev.target.closest('button.btn');
         if (!btn) return;
         const code = btn.getAttribute('data-code');
         const delta = parseFloat(btn.getAttribute('data-delta'));
 
-        // 表示在庫で 0 未満にならないよう防御
+        // 表示在庫で 0 未満防御（UI側）
         const stockEl = btn.closest('.item').querySelector('.stock.badge, .stock.badge.low, .stock.badge.zero');
         const current = Number(stockEl?.dataset.stock ?? 0);
-        if (delta < 0 && current <= 0) {
-          setStatus('在庫はこれ以上減らせません（0未満禁止）', 'err');
-          return;
-        }
+        if (delta < 0 && current <= 0) { setStatus('在庫はこれ以上減らせません（0未満禁止）', 'err'); return; }
 
         try {
-          setStatus(`在庫を ${delta > 0 ? '+' : ''}${delta} します…`);
-          await client.adjust(code, delta);   // 楽観更新：UI即時反映→裏で確定
-          const rec = await client.get(code); // 最新表示
-          renderList(rec ? [rec] : []);
+          setStatus(`在庫を ${delta>0?'+':''}${delta} します…`);
+          await client.ensureAndAdjust(code, delta);   // 原子的インクリメント
           setStatus('在庫を更新しました。', 'ok');
         } catch {
-          setStatus('在庫更新時にエラーが発生しました。', 'err');
-        } finally {
-          refocus();
-        }
+          setStatus('在庫更新に失敗しました。', 'err');
+        } finally { refocus(); }
       };
     }
 
-    // ===== A案：GASデータクライアント =====
-    function createGasClient({ endpoint, pollMs = 4000 }) {
-      const map = new Map();  // code -> record
-      let   last = '';        // 直近updated_at
-      let   timer = null;
-      const listeners = new Set();
-
-      async function fetchJSON(url) {
-        const txt = await (await fetch(url)).text();
-        showDebug(txt);
-        const j = JSON.parse(txt);
-        if (j && j.ok === false) throw new Error(j.error || 'error');
-        return j.list || [];
-      }
-      function snapshot() { return Array.from(map.values()); }
-      function notify()   { listeners.forEach(fn => fn(snapshot())); }
-      function subscribe(fn){ listeners.add(fn); return ()=>listeners.delete(fn); }
-      function stopPolling(){ if (timer){ clearInterval(timer); timer = null; } }
-
-      async function init() {
-        const list = await fetchJSON(`${endpoint}?mode=list`);
-        for (const r of list) {
-          map.set(String(r.code), r);
-          if (r.updated_at && r.updated_at > last) last = r.updated_at;
-        }
-        startPolling();
-        return snapshot();
-      }
-
-      function startPolling(){
-        stopPolling();
-        timer = setInterval(async () => {
-          try{
-            const diff = await fetchJSON(`${endpoint}?mode=changes&since=${encodeURIComponent(last)}`);
-            let changed = false;
-            for (const r of diff) {
-              map.set(String(r.code), r);
-              if (r.updated_at && r.updated_at > last) last = r.updated_at;
-              changed = true;
-            }
-            if (changed) notify();
-          }catch(_){}
-        }, pollMs);
-      }
-
-      async function get(code){
-        const k = String(code);
-        if (map.has(k)) return map.get(k); // ローカル即時
-        const list = await fetchJSON(`${endpoint}?mode=search&code=${encodeURIComponent(code)}`);
-        const rec = list[0] || null;
-        if (rec){
-          map.set(k, rec);
-          if (rec.updated_at && rec.updated_at > last) last = rec.updated_at;
-          notify();
-        }
-        return rec;
-      }
-
-      async function adjust(code, delta){
-        const k = String(code);
-        const prev = map.get(k);
-        // 楽観更新（即時反映）
-        const optimistic = { ...(prev||{code, name:'', stock:0}), stock: Math.max(0, Number(prev?.stock||0) + delta) };
-        map.set(k, optimistic); notify();
-
-        try{
-          const list = await fetchJSON(`${endpoint}?mode=adjust&code=${encodeURIComponent(code)}&delta=${delta}`);
-          const real = list[0] || optimistic;
-          map.set(k, real);
-          if (real.updated_at && real.updated_at > last) last = real.updated_at;
-          notify();
-          return real;
-        }catch(e){
-          // 失敗時ロールバック
-          if (prev) map.set(k, prev); else map.delete(k);
-          notify();
-          throw e;
-        }
-      }
-
-      return { init, get, adjust, subscribe, snapshot, stopPolling };
-    }
-
-    // ===== iOS ショートカット起動（任意） =====
-    function buildShortcutURL() {
-      const name = encodeURIComponent(SHORTCUT_NAME);
-      const text = encodeURIComponent(RETURN_BASE_URL);
-      return `shortcuts://run-shortcut?name=${name}&input=text&text=${text}`;
-    }
+    // ===== iOS ショートカットボタン（任意） =====
     function initShortcutButton() {
-      const btn = qs('#iosScanBtn');
+      const btn = document.getElementById('iosScanBtn');
       if (!btn) return;
       if (isIOS) {
         btn.style.display = '';
-        btn.addEventListener('click', () => { location.href = buildShortcutURL(); });
+        btn.addEventListener('click', () => {
+          const name = encodeURIComponent(SHORTCUT_NAME);
+          const text = encodeURIComponent(RETURN_BASE_URL);
+          location.href = `shortcuts://run-shortcut?name=${name}&input=text&text=${text}`;
+        });
       }
     }
 
     // ===== 起動処理 =====
-    const client = createGasClient({ endpoint: GAS_ENDPOINT, pollMs: 4000 });
-
-    (async function init() {
-      if (!GAS_ENDPOINT || GAS_ENDPOINT.includes('YOUR_GAS_WEBAPP_URL')) {
-        setStatus('GAS の URL（GAS_ENDPOINT）を設定してください。', 'err');
+    (async function main(){
+      const client = createFirestoreClient();
+      try {
+        await client.signIn(); // 匿名ログイン
+      } catch {
+        setStatus('ログインに失敗しました（Firebase Auth）。', 'err');
         return;
       }
 
-      // 先読み（全件→Map化）
-      try {
-        await client.init();
-      } catch {
-        setStatus('初期データの取得に失敗しました。', 'err');
-      }
-
-      const input = qs('#codeInput');
-      const btn = qs('#searchBtn');
+      const input = document.getElementById('codeInput');
+      const btn   = document.getElementById('searchBtn');
 
       // Enterで検索（外部HIDスキャナのEnterも拾える）
-      input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-          btn.click();
-        }
-      });
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') btn.click(); });
 
-      // クリックで検索
+      // 検索
       btn.addEventListener('click', async () => {
         const code = input.value.trim();
-        if (!code) {
-          setStatus('code が空です。バーコードを読み取ってください。', 'err');
-          return;
-        }
-        const rec = await client.get(code);   // ローカル即時 or 初見のみ1回サーバ問い合わせ
-        renderList(rec ? [rec] : []);
-        setStatus(rec ? '検索完了（1件）' : '該当なし', rec ? 'ok' : 'muted');
+        if (!code) { setStatus('code が空です。', 'err'); return; }
+        currentCode = code;
+        setStatus('検索中…');
+
+        // 現在の doc を購読（以後リアルタイム反映）
+        client.subscribeRecord(code, (rec) => {
+          renderRecord(rec, client);
+          if (rec) setStatus('リアルタイムで同期中'); else setStatus('該当なし');
+        });
+
+        // 初回描画の“間”を埋める（即時に現状を出す）
+        const first = await client.get(code);
+        renderRecord(first, client);
+        setStatus(first ? '検索完了（リアルタイム購読開始）' : '該当なし');
         refocus();
       });
 
-      // 差分購読：表示中のレコードが更新されたら自動再描画
-      client.subscribe(list => {
-        if (!currentCode) return;
-        const rec = list.find(r => String(r.code) === String(currentCode));
-        if (rec) {
-          // 画面上の表示在庫が違えば更新
-          const badge = qs('.stock.badge, .stock.badge.low, .stock.badge.zero');
-          if (!badge || Number(badge.dataset.stock) !== Number(rec.stock)) {
-            renderList([rec]);
-            setStatus('最新データに同期しました。');
-          }
-        }
-      });
+      // 初期フォーカス & URLクエリから自動検索
+      setTimeout(()=> input.focus(), 0);
+      const params = new URLSearchParams(location.search);
+      const pre = params.get('code');
+      if (pre) { input.value = pre; btn.click(); }
 
-      // iOSショートカットボタン
       initShortcutButton();
-
-      // 初回フォーカス & URLクエリからの自動検索
-      setTimeout(() => input.focus(), 0);
-      const code = getQueryParam('code');
-      if (code) {
-        input.value = code;
-        const rec = await client.get(code);
-        renderList(rec ? [rec] : []);
-        setStatus(rec ? '検索完了（1件）' : '該当なし', rec ? 'ok' : 'muted');
-      }
     })();
   </script>
 </body>
 </html>
+
 
 
 
