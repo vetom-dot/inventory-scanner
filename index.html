@@ -1,203 +1,250 @@
 <!doctype html>
 <html lang="ja">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>在庫スキャン受け口（?code= で +1）</title>
-<style>
-  :root{ color-scheme: light dark; }
-  *{ box-sizing:border-box; }
-  body{ margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,"ヒラギノ角ゴ ProN","游ゴシック",sans-serif; background:#f6f7f9; color:#222; }
-  header{ position:sticky; top:0; background:#0b5; color:#fff; padding:12px 16px; font-weight:700; }
-  .wrap{ padding:14px 16px 80px; }
-  .card{ background:#fff; border-radius:16px; padding:14px; box-shadow:0 2px 8px rgba(0,0,0,.08); margin:12px 0; }
-  .row{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
-  input,button{ font-size:16px; padding:10px; border-radius:10px; border:1px solid #ddd; }
-  button.primary{ background:#0b5; color:#fff; border:none; font-weight:700; }
-  .pill{ display:inline-block; padding:3px 8px; border-radius:999px; background:#eef; font-size:12px; margin-left:6px; }
-  .log{ font-size:13px; white-space:pre-wrap; color:#555; }
-  .ok{ color:#075; } .ng{ color:#a00; }
-  .muted{ color:#777; font-size:12px; }
-</style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>病院在庫管理</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; padding: 16px; line-height: 1.6; }
+    .row { margin-bottom: 12px; }
+    .code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: #f5f5f7; padding: 8px; border-radius: 6px; white-space: pre-wrap; }
+    .btn { padding: 10px 14px; border: 1px solid #ddd; border-radius: 8px; background: #fafafa; cursor: pointer; }
+    .btn:active { transform: translateY(1px); }
+    #result { margin-top: 12px; }
+    #debug { margin-top: 20px; }
+    .grid { display: grid; gap: 8px; }
+    .grid2 { grid-template-columns: 1fr auto auto; align-items: center; }
+    .muted { color: #666; }
+    .ok { color: #0a7b27; font-weight: 600; }
+    .err { color: #b00020; font-weight: 600; }
+  </style>
 </head>
 <body>
-<header>病院在庫：スキャン受け取り</header>
+  <h1>病院在庫管理</h1>
 
-<div class="wrap">
-
-  <div class="card">
-    <div class="row">
-      <input id="code" placeholder="バーコードを入力 / ?code= で自動" inputmode="numeric" style="flex:1" />
-      <button id="search">検索</button>
-    </div>
-    <div class="row" style="margin-top:8px">
-      <button id="plus1" class="primary">このバーコードで在庫＋1</button>
-      <button id="minus1">在庫−1</button>
-      <label style="display:flex; align-items:center; gap:8px; margin-left:auto;">
-        <input type="checkbox" id="autoPlus" checked /> 自動＋1（?code受信時）
-      </label>
-    </div>
-    <div id="status" class="log" style="margin-top:8px"></div>
+  <div class="row">
+    <label>バーコード（code）</label><br />
+    <input id="codeInput" type="text" style="width: 100%; padding: 10px; font-size: 16px;" placeholder="例: 4901777018686" />
   </div>
 
-  <div id="resultCard" class="card" style="display:none">
-    <div class="row">
-      <div style="font-weight:700">該当ロット</div>
-      <div id="hitCount" class="pill">0件</div>
-    </div>
-    <div id="hits" class="log" style="margin-top:8px"></div>
+  <div class="row">
+    <button class="btn" id="searchBtn">検索</button>
   </div>
 
-  <div class="card muted">
-    外部スキャナ連携の例：
-    <ul>
-      <li>iPhoneショートカット → <code>URL: https://&lt;あなた&gt;.github.io/&lt;repo&gt;/?code=［スキャン結果］</code></li>
-      <li>Android(Binary Eye) → URLテンプレ <code>https://&lt;あなた&gt;.github.io/&lt;repo&gt;/?code=%s</code></li>
-    </ul>
+  <div id="status" class="row muted"></div>
+
+  <div id="result" class="grid"></div>
+
+  <div id="debug">
+    <details>
+      <summary>デバッグ（生レスポンス表示）</summary>
+      <div class="code" id="debugRaw"></div>
+    </details>
   </div>
 
-</div>
+  <script>
+    // ★ ここを書き換えてください ★
+    const GAS_ENDPOINT = 'YOUR_GAS_WEBAPP_URL'; // 例: https://script.google.com/macros/s/AKfycb.../exec
 
-<script>
-/*** ←ここをあなたの Apps Script Web アプリ（/exec）URLに貼り替え ***/
-const GAS_URL = "https://script.google.com/macros/s/AKfycbwFBp3PyVOYlkhbgdzJC0rEwkrhu5A05vIjDMyFrXZWonZznM0xiIn0rPZPVQHMtNr7/exec";
-
-/* ============ API ラッパ ============ */
-async function api(action, payload = {}) {
-  const res = await fetch(GAS_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain' }, // プリフライト回避
-    body: JSON.stringify({ action, ...payload })
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return await res.json();
-}
-const searchByCode = (code) => api('search', { q: String(code||'').trim() });
-const adjust = (lotId, delta, reason='外部スキャン') => api('adjust', { lotId, delta, reason });
-
-/* ============ 要素参照 ============ */
-const els = {
-  code:   document.getElementById('code'),
-  search: document.getElementById('search'),
-  plus1:  document.getElementById('plus1'),
-  minus1: document.getElementById('minus1'),
-  autoPlus: document.getElementById('autoPlus'),
-  status: document.getElementById('status'),
-  resultCard: document.getElementById('resultCard'),
-  hits:   document.getElementById('hits'),
-  hitCount: document.getElementById('hitCount'),
-};
-
-/* ============ 便利 ============ */
-function showStatus(html){ els.status.innerHTML = html; }
-function ok(msg){ showStatus(`<span class="ok">${msg}</span>`); }
-function ng(msg){ showStatus(`<span class="ng">${msg}</span>`); }
-function beep(){
-  try{
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const o = ctx.createOscillator(), g = ctx.createGain();
-    o.type='square'; o.frequency.value=880; g.gain.value=0.05;
-    o.connect(g).connect(ctx.destination); o.start(); setTimeout(()=>o.stop(),120);
-  }catch{}
-  navigator.vibrate?.(60);
-}
-
-/* ============ 表示更新 ============ */
-function renderHits(list){
-  els.resultCard.style.display = 'block';
-  els.hitCount.textContent = `${list.length}件`;
-  if (!list.length){
-    els.hits.textContent = '該当ロットなし。まず商品登録してください。';
-    return;
-  }
-  els.hits.innerHTML = list.map(x => `
-    <div style="padding:10px 12px; border:1px solid #eee; border-radius:10px; margin:8px 0;">
-      <div><b>${x.name || '(名称未設定)'}</b> <span class="pill">在庫 ${x.qty_on_hand}</span></div>
-      <div style="font-size:12px;color:#666;">${x.barcode || ''} / ロット: ${x.lot_code || '-'}</div>
-      <div style="font-size:12px;">期限: ${x.expiry_date || '—'}</div>
-      <div class="row" style="margin-top:6px">
-        <button onclick="doAdjust('${x.lot_id}',-1)">−1</button>
-        <button class="primary" onclick="doAdjust('${x.lot_id}',1)">＋1</button>
-      </div>
-    </div>
-  `).join('');
-}
-
-/* ============ 業務フロー ============ */
-async function doSearch(){
-  const code = (els.code.value||'').trim();
-  if (!code){ ng('バーコードが空です'); return; }
-  showStatus('検索中…');
-  try{
-    const list = await searchByCode(code);
-    const exact = (list||[]).filter(x => (x.barcode||'') === code);
-    renderHits(exact.length ? exact : (list||[])); // 完全一致が無ければ近い候補も表示
-    if (exact.length){
-      ok(`バーコード一致: ${exact.length}件`);
-    }else{
-      ng('バーコード一致なし。商品未登録かも。');
+    // クエリ取得
+    function getQueryParam(name) {
+      const params = new URLSearchParams(location.search);
+      return params.get(name) || '';
     }
-    return exact;
-  }catch(e){
-    ng('検索失敗: ' + (e.message || e));
-    els.resultCard.style.display = 'none';
-    return [];
-  }
-}
 
-async function doAdjust(lotId, delta){
-  showStatus(`${delta>0?'+1':'-1'} 反映中…`);
-  try{
-    await adjust(lotId, delta, delta>0? '外部スキャン +1':'外部スキャン -1');
-    ok(`在庫を ${delta>0?'+1':'-1'} しました`);
-    beep();
-    // 反映後の在庫を再描画
-    await doSearch();
-  }catch(e){
-    ng('在庫更新失敗: ' + (e.message || e));
-  }
-}
+    // 受けた "何か" を「配列」に変換する超寛容ヘルパー
+    function toListArray(anything) {
+      try {
+        // 1) null / undefined
+        if (anything == null) return [];
 
-async function plusOrMinus(delta){
-  const code = (els.code.value||'').trim();
-  if (!code){ ng('バーコードが空です'); return; }
-  const exact = await doSearch();
-  if (!exact.length){ return; }
-  // FEFOで一番期限が近いものを自動選択
-  exact.sort((a,b)=>{
-    const ad = a.expiry_date ? new Date(a.expiry_date).getTime() : Infinity;
-    const bd = b.expiry_date ? new Date(b.expiry_date).getTime() : Infinity;
-    return ad - bd;
-  });
-  await doAdjust(exact[0].lot_id, delta);
-}
+        // 2) 文字列なら、JSON の可能性を先に試す
+        if (typeof anything === 'string') {
+          const trimmed = anything.trim();
+          if (trimmed === '') return [];
+          try {
+            const parsed = JSON.parse(trimmed);
+            return toListArray(parsed); // 再帰で正規化
+          } catch {
+            // 純粋な文字列しか来ていない場合は「1要素配列」として返す
+            return [trimmed];
+          }
+        }
 
-/* ============ 起動時（?code= を処理） ============ */
-(function bootstrapFromQuery(){
-  const p = new URLSearchParams(location.search);
-  const incoming = p.get('code') || p.get('ean') || p.get('gtin');
-  if (!incoming) return;
-  // UPC-A(12) → EAN-13 / GTIN-14(頭0) → 13桁に正規化
-  let code = String(incoming).trim();
-  if (/^\d{12}$/.test(code)) code = '0' + code;           // UPC-A
-  if (/^0\d{13}$/.test(code)) code = code.slice(1);        // GTIN-14 → 13
-  els.code.value = code;
-  // 自動＋1
-  document.addEventListener('DOMContentLoaded', async () => {
-    await doSearch();
-    if (els.autoPlus.checked){
-      await plusOrMinus(+1);
+        // 3) すでに Array
+        if (Array.isArray(anything)) return anything;
+
+        // 4) オブジェクトの場合：よくあるキーを順に当てにいく
+        if (typeof anything === 'object') {
+          // お約束のキー群
+          const candidateKeys = ['list', 'items', 'data', 'results', 'rows', 'records'];
+          for (const key of candidateKeys) {
+            if (Array.isArray(anything[key])) return anything[key];
+          }
+          // list が単体オブジェクトのことも
+          if (anything.list && typeof anything.list === 'object' && !Array.isArray(anything.list)) {
+            return [anything.list];
+          }
+          // 単一レコードっぽいオブジェクトは 1要素配列に
+          return [anything];
+        }
+
+        // 5) それ以外（数値や真偽値など）は 1要素配列に
+        return [anything];
+      } catch (err) {
+        console.error('toListArray error:', err);
+        return [];
+      }
     }
-  });
-})();
 
-/* ============ イベント ============ */
-els.search.addEventListener('click', doSearch);
-els.plus1.addEventListener('click', () => plusOrMinus(+1));
-els.minus1.addEventListener('click', () => plusOrMinus(-1));
-</script>
+    // 共通：デバッグ表示
+    function showDebug(raw) {
+      const el = document.getElementById('debugRaw');
+      try {
+        el.textContent = typeof raw === 'string' ? raw : JSON.stringify(raw, null, 2);
+      } catch {
+        el.textContent = String(raw);
+      }
+    }
+
+    // 共通：ステータス表示
+    function setStatus(text, isError = false) {
+      const el = document.getElementById('status');
+      el.textContent = text || '';
+      el.className = isError ? 'row err' : 'row muted';
+    }
+
+    // 結果描画
+    function renderList(list) {
+      const box = document.getElementById('result');
+      box.innerHTML = '';
+      if (!list || list.length === 0) {
+        box.innerHTML = '<div class="muted">該当データがありません。</div>';
+        return;
+      }
+      list.forEach(item => {
+        const code = item.code ?? '';
+        const name = item.name ?? '';
+        const stock = Number(item.stock ?? 0);
+
+        const row = document.createElement('div');
+        row.className = 'grid grid2';
+        row.innerHTML = `
+          <div>
+            <div><strong>${name || '(名称未設定)'}</strong></div>
+            <div class="muted">code: <span class="code">${code}</span></div>
+          </div>
+          <div>在庫: <strong>${isFinite(stock) ? stock : 0}</strong></div>
+          <div>
+            <button class="btn" data-delta="-1" data-code="${code}">-1</button>
+            <button class="btn" data-delta="+1" data-code="${code}">+1</button>
+          </div>
+        `;
+        box.appendChild(row);
+      });
+
+      // クリック委譲で +1/-1
+      box.addEventListener('click', async (ev) => {
+        const btn = ev.target.closest('button.btn');
+        if (!btn) return;
+        const code = btn.getAttribute('data-code');
+        const delta = parseFloat(btn.getAttribute('data-delta'));
+        await adjustStock(code, delta);
+      }, { once: true }); // 一度だけバインド（再描画時に再バインド）
+    }
+
+    // 検索
+    async function doSearch(code) {
+      if (!GAS_ENDPOINT || GAS_ENDPOINT.includes('YOUR_GAS_WEBAPP_URL')) {
+        setStatus('GAS の URL（GAS_ENDPOINT）を設定してください。', true);
+        return;
+      }
+      if (!code) {
+        setStatus('code が空です。バーコードを読み取ってください。', true);
+        return;
+      }
+
+      try {
+        setStatus('検索中…');
+        const url = `${GAS_ENDPOINT}?mode=search&code=${encodeURIComponent(code)}`;
+        const res = await fetch(url, { method: 'GET' });
+        const text = await res.text();     // まず text で取得（文字列返却や HTML 化にも耐える）
+        showDebug(text);
+
+        let json;
+        try {
+          json = JSON.parse(text);
+        } catch {
+          // JSON じゃなくても toListArray で最低限処理可能
+          json = text;
+        }
+
+        // ★ どんな形でも list 配列を取り出す（なければ配列化）
+        const list = toListArray(json);
+        renderList(list);
+
+        // ok / error 表示（もしあれば）
+        if (json && typeof json === 'object') {
+          if (json.ok === false) {
+            setStatus(json.error ? `検索失敗: ${json.error}` : '検索失敗', true);
+          } else {
+            setStatus(`検索完了（${list.length}件）`);
+          }
+        } else {
+          setStatus(`検索完了（${list.length}件）`);
+        }
+      } catch (err) {
+        console.error(err);
+        setStatus('通信エラーが発生しました。', true);
+      }
+    }
+
+    // 在庫加減算
+    async function adjustStock(code, delta) {
+      try {
+        setStatus(`在庫を ${delta > 0 ? '+' : ''}${delta} します…`);
+        const url = `${GAS_ENDPOINT}?mode=adjust&code=${encodeURIComponent(code)}&delta=${encodeURIComponent(delta)}`;
+        const res = await fetch(url, { method: 'GET' });
+        const text = await res.text();
+        showDebug(text);
+
+        let json;
+        try { json = JSON.parse(text); } catch { json = text; }
+        const list = toListArray(json);
+        renderList(list);
+
+        if (json && typeof json === 'object') {
+          if (json.ok === false) {
+            setStatus(json.error ? `更新失敗: ${json.error}` : '更新失敗', true);
+          } else {
+            setStatus('在庫を更新しました。');
+          }
+        } else {
+          setStatus('在庫を更新しました。');
+        }
+      } catch (err) {
+        console.error(err);
+        setStatus('在庫更新時に通信エラーが発生しました。', true);
+      }
+    }
+
+    // 初期化：query の code を拾って検索
+    (function init() {
+      const code = getQueryParam('code');
+      const input = document.getElementById('codeInput');
+      input.value = code || '';
+      document.getElementById('searchBtn').addEventListener('click', () => {
+        doSearch(input.value.trim());
+      });
+
+      if (code) {
+        doSearch(code);
+      }
+    })();
+  </script>
 </body>
 </html>
+
 
 
 
