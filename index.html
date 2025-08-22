@@ -19,6 +19,7 @@
     .btn.warn { background: #ffe9e9; border-color: #f3b4b4; color: #b00020; }
     input[type="text"]{ width: 100%; padding: 10px; font-size: 16px; box-sizing: border-box; }
     .grid { display: grid; gap: 10px; }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; }
     .item { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; padding: 10px; border: 1px solid #eee; border-radius: 10px; }
     .stock.badge { min-width: 64px; text-align: center; padding: 6px 8px; border-radius: 999px; border: 1px solid #ddd; background: #f7f7f9; font-weight: 700; }
     .stock.badge.low { background: #fff8e1; border-color: #ffe082; }
@@ -34,8 +35,11 @@
     <label for="codeInput">バーコード（code）</label><br />
     <input id="codeInput" type="text" inputmode="numeric" placeholder="例: 4901070303885" autocomplete="off" />
   </div>
-  <div class="row">
+
+  <div class="row actions">
     <button class="btn primary" id="searchBtn">検索</button>
+    <!-- iOSのみ表示：ショートカット起動ボタン -->
+    <button class="btn" id="iosScanBtn" style="display:none">iPhoneでスキャンして戻る</button>
   </div>
 
   <div id="status" class="row muted"></div>
@@ -50,11 +54,17 @@
   </div>
 
   <script>
-    // ★ ここをあなたのGAS本番URL (/exec) に差し替え
+    // ===== 設定 =====
+    // ★ あなたのGASウェブアプリ（/exec）URLに置き換えてください
     const GAS_ENDPOINT = 'https://script.google.com/macros/s/AKfycbwEqcAjFzoNGFWhCEhcjZ5SCQLTR9T8pxMJmlQE3gvZW0s1MSgpUFdrU--bqaHbfeXc/exec';
+    // ★ 作成するショートカット名（iOSのショートカットAppで同名を作成）
+    const SHORTCUT_NAME = 'ScanToWeb';
+    // 戻り先のベースURL（このページのURL。必要なら固定文字列で上書きOK）
+    const RETURN_BASE_URL = location.origin + location.pathname;
 
-    // --- ユーティリティ ---
+    // ===== ユーティリティ =====
     const qs = (sel, el=document) => el.querySelector(sel);
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
 
     function getQueryParam(name) {
       const params = new URLSearchParams(location.search);
@@ -93,7 +103,7 @@
       el.className = `row ${type === 'err' ? 'err' : type === 'ok' ? 'ok' : 'muted'}`;
     }
 
-    // --- レンダリング ---
+    // ===== レンダリング =====
     function renderEmpty(code) {
       const box = qs('#result');
       box.innerHTML = `
@@ -102,7 +112,6 @@
           <button id="createBtn" class="btn">在庫0で新規作成</button>
         </div>
       `;
-      // “在庫0で新規作成”
       qs('#createBtn').onclick = async () => {
         await ensureItemZero(code);
       };
@@ -141,7 +150,7 @@
         `;
         box.appendChild(wrap);
 
-        // “マイナス禁止”のフロント防御：0以下なら -1 を無効化
+        // フロント防御：0以下なら -1 を無効化
         const minusBtn = wrap.querySelector('button[data-delta="-1"]');
         if ((isFinite(stock) ? stock : 0) <= 0) {
           minusBtn.disabled = true;
@@ -149,13 +158,13 @@
         }
       }
 
-      // クリック委譲（再描画のたびに1回）
+      // クリック委譲
       box.onclick = async (ev) => {
         const btn = ev.target.closest('button.btn');
         if (!btn) return;
         const code = btn.getAttribute('data-code');
         const delta = parseFloat(btn.getAttribute('data-delta'));
-        // 表示上の在庫を見て 0 未満にならないよう防御
+        // 表示在庫で 0 未満にならないよう防御
         const stockEl = btn.closest('.item').querySelector('.stock.badge, .stock.badge.low, .stock.badge.zero');
         const current = Number(stockEl?.dataset.stock ?? 0);
         if (delta < 0 && current <= 0) {
@@ -166,7 +175,7 @@
       };
     }
 
-    // --- API 呼び出し ---
+    // ===== API 呼び出し =====
     async function fetchText(url, opts) {
       const res = await fetch(url, opts);
       return await res.text();
@@ -225,16 +234,14 @@
     }
 
     // 未ヒット時の「在庫0で新規作成」
-    // 1) サーバが“searchで自動作成”対応なら、search後に1件返る想定
-    // 2) 未対応でも確実に作るために、adjust(+1)→adjust(-1) の二段技で0登録
+    // 2段技：adjust(+1)→adjust(-1) で0登録（サーバ側が未対応でも作れる）
     async function ensureItemZero(code) {
       try {
         setStatus('在庫0で新規作成しています…');
-        // まず +1 でレコードを作る
         const addUrl = `${GAS_ENDPOINT}?mode=adjust&code=${encodeURIComponent(code)}&delta=1`;
         let text = await fetchText(addUrl, { method: 'GET' });
         showDebug(text);
-        // 続けて -1 で 0 に戻す（サーバ側で“0未満禁止”でもOK）
+
         const subUrl = `${GAS_ENDPOINT}?mode=adjust&code=${encodeURIComponent(code)}&delta=-1`;
         text = await fetchText(subUrl, { method: 'GET' });
         showDebug(text);
@@ -249,7 +256,29 @@
       }
     }
 
-    // --- 初期化 ---
+    // ===== iOS ショートカット起動 =====
+    function buildShortcutURL() {
+      // Web→Shortcuts へ：戻り先URL（このページのベース）を Shortcuts の「入力（text）」として渡す
+      const name = encodeURIComponent(SHORTCUT_NAME);
+      const text = encodeURIComponent(RETURN_BASE_URL);
+      // x-success を使いたい場合は下記のようにクエリを追加できます（今回はシンプルに入力のみ）
+      // const xsuccess = encodeURIComponent(RETURN_BASE_URL);
+      return `shortcuts://run-shortcut?name=${name}&input=text&text=${text}`;
+    }
+
+    function initShortcutButton() {
+      const btn = qs('#iosScanBtn');
+      if (!btn) return;
+      if (isIOS) {
+        btn.style.display = '';
+        btn.addEventListener('click', () => {
+          // 直接遷移（ユーザー操作起点なのでブロックされにくい）
+          location.href = buildShortcutURL();
+        });
+      }
+    }
+
+    // ===== 初期化 =====
     (function init() {
       const input = qs('#codeInput');
       const btn = qs('#searchBtn');
@@ -263,6 +292,9 @@
       btn.addEventListener('click', () => {
         doSearch(input.value.trim());
       });
+
+      // iOSショートカットボタン
+      initShortcutButton();
 
       // 初回フォーカス
       setTimeout(() => input.focus(), 0);
