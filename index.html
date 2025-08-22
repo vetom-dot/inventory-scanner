@@ -1,23 +1,22 @@
 <!doctype html>
 <html lang="ja">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>在庫スキャナ（ライブ+写真）</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>在庫スキャナ（ライブ＋写真）</title>
 <style>
-  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;margin:0;background:#f6f7f9;color:#222}
+  *{box-sizing:border-box}
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,"ヒラギノ角ゴ ProN","游ゴシック",sans-serif;margin:0;background:#f6f7f9;color:#222}
   header{position:sticky;top:0;background:#0b5;color:#fff;padding:12px 16px;font-weight:700}
   .wrap{padding:12px 16px 80px}
   .card{background:#fff;border-radius:16px;padding:12px;box-shadow:0 2px 8px rgba(0,0,0,.08);margin:12px 0}
   label{display:block;font-size:12px;color:#555;margin:6px 0 4px}
   input,select,button{font-size:16px;padding:10px;border-radius:10px;border:1px solid #ddd}
   button.primary{background:#0b5;color:#fff;border:none;font-weight:700}
+  .row{display:flex;gap:8px;flex-wrap:wrap}.row>*{flex:1}
   video{width:100%;max-height:60vh;border-radius:12px;background:#000}
-  .row{display:flex;gap:8px;flex-wrap:wrap}
-  .row>*{flex:1}
   .log{font-size:12px;color:#555;white-space:pre-wrap}
-  .ok{color:#075}
-  .ng{color:#a00}
+  .ok{color:#075}.ng{color:#a00}
 </style>
 <script src="https://unpkg.com/@zxing/browser@latest"></script>
 </head>
@@ -30,6 +29,7 @@
       <select id="camera"></select>
       <button id="start" class="primary">カメラ開始</button>
       <button id="stop">停止</button>
+      <button id="flip">前面/背面 切替</button>
     </div>
     <video id="video" playsinline muted></video>
     <div id="status" class="log"></div>
@@ -37,7 +37,7 @@
 
   <div class="card">
     <div class="row">
-      <input id="code" placeholder="バーコード（読み取り結果）" inputmode="numeric">
+      <input id="code" placeholder="バーコード（読み取り結果）" inputmode="numeric" />
       <button id="plus1" class="primary">このバーコードで在庫＋1</button>
     </div>
     <div id="result" class="log"></div>
@@ -46,7 +46,7 @@
   <div class="card">
     <label>ライブが難しい端末では写真から読取</label>
     <div class="row">
-      <input type="file" id="photo" accept="image/*">
+      <input type="file" id="photo" accept="image/*" />
       <button id="scanPhoto">写真から読み取る</button>
     </div>
   </div>
@@ -54,41 +54,32 @@
 </div>
 
 <script>
-/*** ←ここだけ差し替え ***/
-const GAS_URL = "https://script.google.com/macros/s/AKfycbwwK9c8S82IijF4_T3vzaLkC98dXSrjzx3g1xd-5D-Ht7LTI1uBG5dXN81AkXyz1eBY/exec"; // ステップ1でコピーした /exec のURL
-const AUTO_PLUS_ONE = true; // 読み取り直後に＋1するなら true
+/*** ←ここをあなたの /exec URL に置き換え ***/
+const GAS_URL = "PASTE_YOUR_GAS_EXEC_URL_HERE";
+/*** 自動で +1 したくない場合は false に ***/
+const AUTO_PLUS_ONE = true;
 
-// ------------- API -------------
-async function api(action, payload={}) {
+/*---------------- API ----------------*/
+async function api(action, payload = {}) {
   const res = await fetch(GAS_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'text/plain' }, // ← CORSプリフライト回避
-    body: JSON.stringify({ action, ...payload }),
+    headers: { 'Content-Type': 'text/plain' }, // プリフライト回避
+    body: JSON.stringify({ action, ...payload })
   });
   return await res.json();
 }
-async function searchByCode(code){
-  return await api('search', { q: code });
-}
-async function adjustPlusOne(lotId){
-  return await api('adjust', { lotId, delta: 1, reason: 'ライブスキャン' });
-}
+async function searchByCode(code){ return await api('search', { q: code }); }
+async function adjustPlusOne(lotId){ return await api('adjust', { lotId, delta: 1, reason: 'ライブスキャン' }); }
 
-// ------------- ZXing -------------
+/*--------------- ZXing ---------------*/
 const ZX = window.ZXingBrowser;
-const hints = new Map();
-if (ZX && ZX.DecodeHintType && ZX.BarcodeFormat) {
-  hints.set(ZX.DecodeHintType.POSSIBLE_FORMATS, [
-    ZX.BarcodeFormat.EAN_13, ZX.BarcodeFormat.UPC_A, ZX.BarcodeFormat.CODE_128
-  ]);
-  hints.set(ZX.DecodeHintType.TRY_HARDER, true);
-}
-const reader = (ZX && ZX.BrowserMultiFormatReader) ? new ZX.BrowserMultiFormatReader(hints, 0) : null;
 
+/*------------- 要素参照 --------------*/
 const els = {
   camera: document.getElementById('camera'),
   start:  document.getElementById('start'),
   stop:   document.getElementById('stop'),
+  flip:   document.getElementById('flip'),
   video:  document.getElementById('video'),
   status: document.getElementById('status'),
   code:   document.getElementById('code'),
@@ -97,13 +88,27 @@ const els = {
   scanPhoto: document.getElementById('scanPhoto'),
   result: document.getElementById('result'),
 };
-let currentDeviceId = null;
-let decodeCtrl = null;
 
+let currentDeviceId = null; // 選択中のカメラID
+let useBack = true;         // true=背面/false=前面
+let decodeCtrl = null;      // ZXing のコントローラ
+
+/* 1) 一瞬だけ権限を取り、デバイス名を出させる */
+async function preWarmPermission(){
+  try {
+    const s = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    s.getTracks().forEach(t => t.stop());
+  } catch(_) {}
+}
+
+/* 2) カメラ一覧 → 背面っぽいものを既定選択 */
 async function listCameras(){
   if (!navigator.mediaDevices?.enumerateDevices) return;
+  await preWarmPermission();
+
   const devs = await navigator.mediaDevices.enumerateDevices();
   const cams = devs.filter(d => d.kind === 'videoinput');
+
   els.camera.innerHTML = '';
   cams.forEach((c, i) => {
     const opt = document.createElement('option');
@@ -111,41 +116,81 @@ async function listCameras(){
     opt.textContent = c.label || `カメラ${i+1}`;
     els.camera.appendChild(opt);
   });
-  // 背面っぽいのを選択
-  const back = cams.find(c => /back|rear|environment/i.test(c.label)) || cams[0];
-  if (back) els.camera.value = back.deviceId;
+
+  let back = cams.find(c => /back|rear|environment/i.test(c.label || '')) || cams[cams.length - 1];
+  if (back) {
+    els.camera.value = back.deviceId;
+    currentDeviceId = back.deviceId;
+    useBack = true;
+  }
 }
 
+/* 3) カメラ開始（deviceId 優先 → だめなら facingMode） */
 async function start(){
   els.result.textContent = '';
   els.status.textContent = 'カメラ起動中…';
-  currentDeviceId = els.camera.value || undefined;
-  if (!reader) { els.status.textContent = 'ZXingの初期化に失敗しました。'; return; }
+
+  const constraints = currentDeviceId
+    ? { video: { deviceId: { exact: currentDeviceId } } }
+    : { video: { facingMode: useBack ? { exact: 'environment' } : { exact: 'user' } } };
 
   try {
-    decodeCtrl = await reader.decodeFromVideoDevice(
-      currentDeviceId || undefined,
-      els.video,
-      (result, err) => {
-        if (result) {
-          const text = result.getText();
-          if (/^\\d{8,14}$/.test(text)) onScan(text);
-        }
+    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+    els.video.srcObject = stream;
+    await els.video.play();
+
+    try { decodeCtrl?.stop(); } catch {}
+
+    if (!ZX || !ZX.BrowserMultiFormatReader) {
+      els.status.textContent = 'ZXing の初期化に失敗しました。';
+      return;
+    }
+    const hints = new Map();
+    hints.set(ZX.DecodeHintType.POSSIBLE_FORMATS, [ZX.BarcodeFormat.EAN_13, ZX.BarcodeFormat.UPC_A, ZX.BarcodeFormat.CODE_128]);
+    hints.set(ZX.DecodeHintType.TRY_HARDER, true);
+    const reader = new ZX.BrowserMultiFormatReader(hints, 0);
+
+    decodeCtrl = await reader.decodeFromVideoElement(els.video, (result, err) => {
+      if (result) {
+        const text = result.getText();
+        if (/^\d{8,14}$/.test(text)) onScan(text);
       }
-    );
-    els.status.textContent = 'スキャン中…（バーコードを枠いっぱいに）';
-    els.start.disabled = true; els.stop.disabled = false;
+    });
+
+    els.status.textContent = useBack ? '背面カメラでスキャン中…' : '前面カメラでスキャン中…';
+    els.start.disabled = true;
+    els.stop.disabled = false;
   } catch (e) {
+    // deviceId で失敗 → facingMode で再試行
+    if (currentDeviceId) {
+      currentDeviceId = null;
+      return start();
+    }
     els.status.innerHTML = `<span class="ng">カメラ起動に失敗: ${e?.name||''} ${e?.message||e}</span>`;
   }
 }
 
 function stop(){
-  try { reader?.reset(); decodeCtrl?.stop(); } catch {}
-  els.start.disabled = false; els.stop.disabled = true;
+  try { decodeCtrl?.stop(); } catch {}
+  try {
+    const s = els.video.srcObject;
+    s?.getTracks().forEach(t => t.stop());
+  } catch {}
+  els.video.srcObject = null;
+  els.start.disabled = false;
+  els.stop.disabled = true;
   els.status.textContent = '停止しました';
 }
 
+/* 4) 前面/背面 切替 */
+function flip(){
+  useBack = !useBack;
+  currentDeviceId = null; // facingMode を効かせる
+  stop();
+  start();
+}
+
+/* 読み取り後の処理（必要なら自動＋1） */
 async function onScan(code){
   els.code.value = code;
   els.status.innerHTML = `<span class="ok">検出: ${code}</span>`;
@@ -163,7 +208,7 @@ async function onScan(code){
   }
 }
 
-// ---- 写真から読取（ライブが難しい端末向け）----
+/* 写真からの読み取り（ライブが難しい端末向け） */
 function fileToDataUrl(file){
   return new Promise((res, rej) => {
     const fr = new FileReader();
@@ -177,28 +222,34 @@ async function scanPhoto(){
   if (!f) { alert('写真を選んでください'); return; }
   els.result.textContent = '解析中…';
   try {
-    // ZXing（静止画）
     const imgUrl = await fileToDataUrl(f);
+    const hints = new Map();
+    hints.set(ZX.DecodeHintType.POSSIBLE_FORMATS, [ZX.BarcodeFormat.EAN_13, ZX.BarcodeFormat.UPC_A, ZX.BarcodeFormat.CODE_128]);
+    hints.set(ZX.DecodeHintType.TRY_HARDER, true);
+    const reader = new ZX.BrowserMultiFormatReader(hints, 0);
     const r = await reader.decodeFromImageUrl(imgUrl);
     const code = r?.getText?.() || '';
-    if (/^\\d{8,14}$/.test(code)) {
-      onScan(code);
-    } else {
-      els.result.textContent = '読み取れませんでした。';
-    }
+    if (/^\d{8,14}$/.test(code)) onScan(code);
+    else els.result.textContent = '読み取れませんでした。';
   } catch {
     els.result.textContent = '読み取れませんでした。';
   }
 }
 
-// 初期化
+/* 初期化 */
 (async function init(){
   await listCameras();
   els.start.addEventListener('click', start);
   els.stop.addEventListener('click', stop);
-  els.plus1.addEventListener('click', async () => onScan(els.code.value.trim()));
+  els.flip.addEventListener('click', flip);
+  els.plus1.addEventListener('click', async () => onScan((els.code.value||'').trim()));
   els.scanPhoto.addEventListener('click', scanPhoto);
+  els.camera.addEventListener('change', () => {
+    currentDeviceId = els.camera.value || null;
+    if (!els.stop.disabled) { stop(); start(); }
+  });
 })();
 </script>
 </body>
 </html>
+
