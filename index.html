@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>病院在庫管理（外部スキャン連携）</title>
+  <title>病院在庫管理（iOSショートカット連携）</title>
   <style>
     :root { --gap: 12px; }
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; padding: 16px; line-height: 1.6; }
@@ -26,8 +26,6 @@
     .stock.badge.zero { background: #ffebee; border-color: #ffcdd2; color: #b00020; }
     details summary { cursor: pointer; }
     #result-empty { padding: 8px 0; }
-    .card { border:1px solid #eee; border-radius:10px; padding:12px; }
-    .apps { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
   </style>
 </head>
 <body>
@@ -43,19 +41,8 @@
     <button class="btn primary" id="searchBtn">検索</button>
     <button class="btn" id="plusBtn">+1</button>
     <button class="btn" id="minusBtn">-1</button>
-  </div>
-
-  <!-- 外部スキャンアプリから起動 → 戻りで ?code=xxx を受ける -->
-  <div class="row card">
-    <strong>外部スキャンアプリで読み取る（スキャン後このページに戻ります）</strong>
-    <div class="apps">
-      <a id="btn-android" class="btn" href="#">Android: ZXing系</a>
-      <a id="btn-ios-p2s" class="btn" href="#">iOS: Pic2Shop</a>
-      <a id="btn-ios-qrf" class="btn" href="#">iOS: Qrafter</a>
-    </div>
-    <div class="muted" style="margin-top:6px">
-      ※対応アプリが未インストールの場合はストアへ誘導されることがあります
-    </div>
+    <!-- iOSのみ表示：ショートカット起動 -->
+    <button class="btn" id="iosScanBtn" style="display:none">ショートカットでスキャン</button>
   </div>
 
   <div id="status" class="row muted"></div>
@@ -70,11 +57,17 @@
 
   <script>
     // ===== 設定 =====
-    // ★ デプロイ済み GAS /exec の URL（あなたのURLで設定済み）
+    // ★ デプロイ済み GAS /exec の URL（あなたのURL）
     const GAS_ENDPOINT = 'https://script.google.com/macros/s/AKfycbzZ-R4mi7duu9Nhr2q4ZmXRS0JQ7tjW4xc6l37fzPDlW5RTPHdr07KObqjRaHQ733m3Og/exec';
+
+    // iOSショートカット名（あなたが作るショートカットの名前）
+    const SHORTCUT_NAME = 'ScanToWeb';
+    // Web→ショートカットへ渡す“戻り先URL”（ショートカットはここへ ?code=xxx を付けて戻す）
+    const RETURN_BASE_URL = location.origin + location.pathname;
 
     // ===== ユーティリティ =====
     const qs = (sel, el=document) => el.querySelector(sel);
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
     function getQueryParam(name){ const p=new URLSearchParams(location.search); return p.get(name)||''; }
     function showDebug(raw){ const el=qs('#debugRaw'); try{ el.textContent = typeof raw==='string' ? raw : JSON.stringify(raw,null,2);}catch{ el.textContent=String(raw);} }
     function setStatus(text, type='muted'){ const el=qs('#status'); el.textContent=text||''; el.className=`row ${type==='err'?'err':type==='ok'?'ok':'muted'}`; }
@@ -136,7 +129,6 @@
       const minusBtn = wrap.querySelector('button[data-delta="-1"]');
       if ((isFinite(stock) ? stock : 0) <= 0) { minusBtn.disabled = true; minusBtn.classList.add('warn'); }
 
-      // 在庫ボタン
       box.onclick = async (ev) => {
         const btn = ev.target.closest('button.btn'); if (!btn) return;
         const code = btn.getAttribute('data-code');
@@ -263,18 +255,35 @@
 
     const client = createGasClient({ endpoint: GAS_ENDPOINT, activeMs: 1000, idleMs: 5000 });
 
+    // ===== iOSショートカット起動 =====
+    function buildShortcutURL(){
+      // name=ショートカット名, input=text, text=戻り先URL（ショートカット側で ?code= を付けて戻す）
+      const name = encodeURIComponent(SHORTCUT_NAME);
+      const text = encodeURIComponent(RETURN_BASE_URL);
+      return `shortcuts://run-shortcut?name=${name}&input=text&text=${text}`;
+    }
+    function initShortcutButton(){
+      const btn = qs('#iosScanBtn'); if (!btn) return;
+      if (isIOS) {
+        btn.style.display='';
+        btn.addEventListener('click', ()=>{
+          location.href = buildShortcutURL();
+        });
+      }
+    }
+
     // ===== 起動処理 =====
     (async function init(){
       if (!GAS_ENDPOINT){ setStatus('GAS の URL（GAS_ENDPOINT）が未設定です。', 'err'); return; }
+
       try { await client.init(); } catch { setStatus('初期データの取得に失敗しました。', 'err'); }
 
       const input = qs('#codeInput');
       const btn = qs('#searchBtn');
 
-      // Enter/Tab で検索（HIDスキャナ対応）
+      // Enter/Tab で検索（HIDスキャナ対策にもなる）
       input.addEventListener('keydown', (e)=>{ if (e.key === 'Enter' || e.key === 'Tab'){ e.preventDefault(); btn.click(); } });
 
-      // 検索ボタンクリック
       btn.addEventListener('click', async ()=>{
         const code = input.value.trim();
         if (!code){ setStatus('code が空です。バーコードを読み取ってください。', 'err'); return; }
@@ -284,7 +293,6 @@
         refocus();
       });
 
-      // ±1 ボタン
       qs('#plusBtn').addEventListener('click', async ()=>{
         const code = input.value.trim();
         if (!code){ setStatus('先に検索またはスキャンしてください。', 'err'); return; }
@@ -304,7 +312,6 @@
         setStatus('在庫を -1 しました。', 'ok');
       });
 
-      // 差分購読：表示中の品目が更新されたら再描画
       client.subscribe(list => {
         if (!currentCode) return;
         const rec = list.find(r => String(r.code) === String(currentCode));
@@ -317,6 +324,9 @@
         }
       });
 
+      // iOSショートカットボタン
+      initShortcutButton();
+
       // URL ?code=XXXX で自動検索
       setTimeout(()=> input.focus(), 0);
       const fromURL = getQueryParam('code');
@@ -326,28 +336,6 @@
         renderList(rec ? [rec] : []);
         setStatus(rec ? '検索完了（1件）' : '該当なし', rec ? 'ok' : 'muted');
       }
-
-      // --- 外部アプリ deep link を生成 ---
-      const base = location.origin + location.pathname;              // 戻り先（このページ）
-      const retTpl = `${base}?code={CODE}`;
-
-      // Android（ZXing系）優先URL + 旧式HTTPフォールバック
-      const androidUrl = `zxing://scan/?ret=${encodeURIComponent(retTpl)}&SCAN_FORMATS=EAN_13,UPC_A,QR_CODE`;
-      const androidAlt = `http://zxing.appspot.com/scan?ret=${encodeURIComponent(retTpl)}&SCAN_FORMATS=EAN_13,UPC_A`;
-
-      // iOS: Pic2Shop（EAN プレースホルダ）
-      const iosPic2Shop = `pic2shop://scan?callback=${encodeURIComponent(base + '?code=EAN')}`;
-
-      // iOS: Qrafter（x-callback-url、{CODE} 部分が置換される）
-      const iosQrafter = `qrafter://x-callback-url/scan?x-success=${encodeURIComponent(base + '?code={CODE}')}&browser=external`;
-
-      const a = document.getElementById('btn-android');
-      a.href = androidUrl;
-      // クリック後に一瞬フォールバックURLも用意（起動失敗時の保険）
-      a.addEventListener('click', () => { setTimeout(()=>{ a.href = androidAlt; }, 120); });
-
-      document.getElementById('btn-ios-p2s').href = iosPic2Shop;
-      document.getElementById('btn-ios-qrf').href = iosQrafter;
     })();
   </script>
 </body>
