@@ -1,78 +1,102 @@
 <!doctype html>
 <html lang="ja">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>病院在庫管理（極値のみ表示・高速＆即時反映）</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>病院在庫管理</title>
 
-  <link rel="preconnect" href="https://script.google.com">
-  <link rel="dns-prefetch" href="//script.google.com">
+<link rel="preconnect" href="https://script.google.com">
+<link rel="dns-prefetch" href="//script.google.com">
 
-  <style>
-    :root { --gap: 12px; }
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; padding: 16px; line-height: 1.6; }
-    h1 { font-size: 28px; margin: 8px 0 16px; }
-    .row { margin-bottom: var(--gap); }
-    .muted { color: #666; }
-    .ok { color: #0a7b27; font-weight: 600; }
-    .err { color: #b00020; font-weight: 600; }
-    .code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: #f5f5f7; padding: 2px 6px; border-radius: 4px; }
-    .btn { padding: 10px 14px; border: 1px solid #ddd; border-radius: 8px; background: #fafafa; cursor: pointer; text-decoration:none; color:inherit; display:inline-block; }
-    .btn.primary { background: #1a73e8; border-color: #1a73e8; color: #fff; }
-    .btn.warn { background: #ffe9e9; border-color: #f3b4b4; color: #b00020; }
-    input[type="text"], input[type="date"], input[type="number"]{ width: 100%; padding: 10px; font-size: 16px; box-sizing: border-box; }
-    .grid { display: grid; gap: 10px; }
-    .actions { display: flex; gap: 10px; flex-wrap: wrap; }
-    .item { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; padding: 10px; border: 1px solid #eee; border-radius: 10px; }
-    .stock.badge { min-width: 64px; text-align: center; padding: 6px 8px; border-radius: 999px; border: 1px solid #ddd; background: #f7f7f9; font-weight: 700; }
-    .stock.badge.low { background: #fff8e1; border-color: #ffe082; }
-    .stock.badge.zero { background: #ffebee; border-color: #ffcdd2; color: #b00020; }
-    details summary { cursor: pointer; }
-    #result-empty { padding: 8px 0; }
-    .meta { font-size: 13px; color: #444; }
-    .meta code { background:#f3f6fb; border:1px solid #e3e8f0; padding:1px 4px; border-radius:4px; }
-    .form-row { display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
-    .edit-panel { grid-column: 1 / -1; border:1px dashed #ddd; border-radius:10px; padding:10px; background:#fafafa; }
-  </style>
+<style>
+  :root { --gap:12px; --radius:14px; --chip:#eef2f7; --text:#111; --muted:#6b7280; --primary:#1a73e8; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:16px; font-family: system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:var(--text); line-height:1.5; }
+  h1 { font-size:22px; margin:4px 0 14px; }
+  .row { margin-bottom: var(--gap); }
+  .muted { color: var(--muted); }
+  .ok   { color: #0a7b27; font-weight:600; }
+  .err  { color: #b00020; font-weight:600; }
+  .btn { display:inline-flex; align-items:center; justify-content:center; padding:10px 14px; border:1px solid #e5e7eb; border-radius:12px; background:#fff; font-size:15px; text-decoration:none; color:inherit; }
+  .btn.primary { background: var(--primary); border-color: var(--primary); color:#fff; }
+  .btn.ghost { background:#f8fafc; }
+  .btn.warn { background:#ffeaea; border-color:#ffc4c4; color:#b00020; }
+  input[type="text"], input[type="date"], input[type="number"] {
+    width:100%; padding:12px; font-size:16px; border:1px solid #e5e7eb; border-radius:12px; background:#fff;
+  }
+  .actions { display:flex; gap:10px; flex-wrap:wrap; }
+  .grid { display:grid; gap:12px; }
+  .card {
+    border:1px solid #e5e7eb; border-radius:16px; padding:14px;
+    box-shadow: 0 1px 0 rgba(16,24,40,.03);
+  }
+  .titleRow { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .name { font-size:18px; font-weight:700; word-break:break-word; }
+  .chipRow { display:flex; flex-wrap:wrap; gap:8px; margin-top:6px; }
+  .chip {
+    display:inline-flex; align-items:center; padding:6px 8px; border-radius:999px;
+    background:var(--chip); border:1px solid #e5e7eb; font-size:13px; color:#374151;
+  }
+  .stockWrap {
+    display:grid; grid-template-columns: 1fr auto; align-items:center; gap:12px; margin-top:12px;
+  }
+  .stockBadge {
+    justify-self:center;
+    min-width:96px; text-align:center; padding:14px 18px; border-radius:999px;
+    border:1px solid #e5e7eb; background:#f8fafc; font-weight:800; font-size:28px;
+  }
+  .stockBadge.low  { background:#fff7e6; }
+  .stockBadge.zero { background:#ffebee; color:#b00020; }
+  .udCol { display:flex; flex-direction:column; gap:8px; }
+  .udCol .btn { width:56px; height:44px; padding:0; font-size:18px; }
+  .drawer { margin-top:12px; border:1px dashed #e5e7eb; border-radius:12px; padding:12px; background:#fbfbfc; }
+  .formRow { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .small { font-size:12px; }
+  details summary { cursor:pointer; }
+  .code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+</style>
 
-  <script>
-    // ★ あなたの GAS /exec
-    window.GAS_ENDPOINT = 'https://script.google.com/macros/s/AKfycbw0EwBj7obbIaqRlLirAr4ejxGx_PVL_h_7sLMn9Bl3G96A7qOAtbWU_pMNrqv0n3o2/exec'; // ←差し替え
-    window.SHORTCUT_NAME = 'ScanToWeb'; // ←差し替え
-    window.DEBUG = false;
+<script>
+// === 設定（差し替え） ===
+window.GAS_ENDPOINT = 'https://script.google.com/macros/s/AKfycbx9RoOPcbTfIJL97_wdwta2gQJe5q5BGO3ozHm9x50q9eBQs2DLPLVvMBl9zM99ELZ9/exec';
+window.SHORTCUT_NAME = 'ScanToWeb';
+window.DEBUG = false;
 
-    (function(){
-      const p = new URLSearchParams(location.search);
-      window.__initialCode = p.get('code') || '';
-    })();
+// ?code を先読み
+(function(){
+  const p = new URLSearchParams(location.search);
+  window.__initialCode = p.get('code') || '';
+})();
 
-    document.addEventListener('DOMContentLoaded', () => {
-      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-      const btn = document.getElementById('iosScanBtn');
-      if (isIOS && btn) {
-        const base = location.origin + location.pathname;
-        const href = `shortcuts://run-shortcut?name=${encodeURIComponent(window.SHORTCUT_NAME)}&input=text&text=${encodeURIComponent(base)}`;
-        btn.style.display = '';
-        btn.addEventListener('click', ()=>{ location.href = href; });
-      }
-    });
+// iOSショートカットボタン
+document.addEventListener('DOMContentLoaded', () => {
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+  const btn = document.getElementById('iosScanBtn');
+  if (isIOS && btn) {
+    const base = location.origin + location.pathname;
+    const href = `shortcuts://run-shortcut?name=${encodeURIComponent(window.SHORTCUT_NAME)}&input=text&text=${encodeURIComponent(base)}`;
+    btn.style.display = '';
+    btn.addEventListener('click', ()=>{ location.href = href; });
+  }
+});
 
-    (function(){ try { new Image().src = window.GAS_ENDPOINT + '?mode=health&ts=' + Date.now(); } catch {} })();
-  </script>
+// ウォームアップ
+(function(){ try { new Image().src = window.GAS_ENDPOINT + '?mode=health&ts=' + Date.now(); } catch {} })();
+</script>
 </head>
 <body>
   <h1>病院在庫管理</h1>
 
   <div class="row">
-    <label for="codeInput">バーコード（code）</label><br />
+    <label for="codeInput" class="small muted">バーコード（code）</label>
     <input id="codeInput" type="text" inputmode="numeric" placeholder="例: 4901070303885"
-           autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
+      autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
   </div>
 
   <div class="row actions">
     <button class="btn primary" id="searchBtn">検索</button>
-    <button class="btn" id="plusBtn">+1</button>
-    <button class="btn" id="minusBtn">-1</button>
+    <button class="btn ghost"   id="plusBtn">+1</button>
+    <button class="btn ghost"   id="minusBtn">-1</button>
     <button class="btn" id="iosScanBtn" style="display:none">ショートカットでスキャン</button>
   </div>
 
@@ -82,413 +106,374 @@
   <div class="row">
     <details>
       <summary>デバッグ（生レスポンス表示）</summary>
-      <pre id="debugRaw" class="code" style="white-space: pre-wrap;"></pre>
+      <pre id="debugRaw" style="white-space:pre-wrap; font-size:12px;"></pre>
     </details>
   </div>
 
-  <script defer>
-    const qs = (sel, el=document) => el.querySelector(sel);
-    function showDebug(raw){ if(!window.DEBUG) return; const el=qs('#debugRaw'); try{ el.textContent = typeof raw==='string' ? raw : JSON.stringify(raw,null,2);}catch{ el.textContent=String(raw);} }
-    function setStatus(text, type='muted'){ const el=qs('#status'); el.textContent=text||''; el.className=`row ${type==='err'?'err':type==='ok'?'ok':'muted'}`; }
-    function refocus(){ const i=qs('#codeInput'); setTimeout(()=>{i.focus(); i.select();},0); }
+<script defer>
+const qs = (s,el=document)=>el.querySelector(s);
+function showDebug(raw){ if(!window.DEBUG) return; const el=qs('#debugRaw'); try{ el.textContent=typeof raw==='string'?raw:JSON.stringify(raw,null,2);}catch{ el.textContent=String(raw);} }
+function setStatus(text,type='muted'){ const el=qs('#status'); el.textContent=text||''; el.className=`row ${type==='err'?'err':type==='ok'?'ok':'muted'}`; }
+function refocus(){ const i=qs('#codeInput'); setTimeout(()=>{i.focus(); i.select();},0); }
 
-    function setBadgeStock(badgeEl, next) {
-      const v = Math.max(0, Number(next || 0));
-      badgeEl.dataset.stock = String(v);
-      badgeEl.textContent = String(v);
-      badgeEl.className = (v <= 0) ? 'stock badge zero'
-                      : (v <= 2) ? 'stock badge low'
-                                  : 'stock badge';
-    }
-    function stockBadgeClass(stock){
-      if (!isFinite(stock) || stock <= 0) return 'stock badge zero';
-      if (stock <= 2) return 'stock badge low';
-      return 'stock badge';
-    }
+// 表示ヘルパ
+function chip(text){ return `<span class="chip">${text}</span>`; }
+function fmtDateStr(s){
+  if(!s) return '';
+  // s が ISO/日付文字列なら YYYY-MM-DD に
+  const d = new Date(s);
+  if(!isNaN(d)) {
+    const y=d.getFullYear();
+    const m=String(d.getMonth()+1).padStart(2,'0');
+    const da=String(d.getDate()).padStart(2,'0');
+    return `${y}-${m}-${da}`;
+  }
+  return s; // そのまま表示
+}
+function badgeClass(v){
+  if(!isFinite(v) || v<=0) return 'stockBadge zero';
+  if(v<=2) return 'stockBadge low';
+  return 'stockBadge';
+}
 
-    const confirmedStock = new Map();
-    const localDelta     = new Map();
-    const displayTarget  = new Map();
+// 状態
+const confirmedStock = new Map(); // code -> number
+const localDelta     = new Map(); // code -> number
+const displayTarget  = new Map(); // code -> number
 
-    function createGasClient(endpoint) {
-      let last = ''; const listeners = new Set(); let polling = false;
-      const WAIT = 200;
-      const queue = new Map(); // code -> { total, timer, resolvers, meta }
+// GAS クライアント（合算送信・差分購読）
+function createGasClient(endpoint){
+  let last=''; const listeners=new Set(); let polling=false;
+  const WAIT=200; const queue=new Map(); // code -> {total,timer,resolvers,meta}
 
-      async function fetchJSON(url) {
-        const res = await fetch(url, { cache: 'no-store' });
-        const txt = await res.text(); showDebug(txt);
-        const j = JSON.parse(txt); if (j && j.ok === false) throw new Error(j.error||'error');
-        return j.list || [];
-      }
-      function subscribe(fn){ listeners.add(fn); return ()=>listeners.delete(fn); }
-      function notify(list){ listeners.forEach(fn => fn(list)); }
+  async function fetchJSON(url){
+    const res=await fetch(url,{cache:'no-store'}); const txt=await res.text(); showDebug(txt);
+    const j=JSON.parse(txt); if(j && j.ok===false) throw new Error(j.error||'error'); return j.list||[];
+  }
+  function subscribe(fn){ listeners.add(fn); return ()=>listeners.delete(fn); }
+  function notify(list){ listeners.forEach(fn=>fn(list)); }
 
-      async function get(code){
-        return (await fetchJSON(`${endpoint}?mode=search&code=${encodeURIComponent(String(code))}`))[0] || null;
-      }
-
-      function adjust(code, delta, meta={}) {
-        const k = String(code);
-        let item = queue.get(k);
-        if (!item) { item = { total: 0, timer: null, resolvers: [], meta: {} }; queue.set(k, item); }
-        item.total += delta;
-        item.meta = { ...item.meta, ...meta };
-
-        const promise = new Promise((resolve, reject)=> item.resolvers.push({resolve, reject}));
-
-        if (item.timer) clearTimeout(item.timer);
-        item.timer = setTimeout(async () => {
-          const total = item.total; const resolvers = item.resolvers.slice(); const metaFinal = item.meta || {};
-          queue.delete(k);
-          try {
-            const url = new URL(`${endpoint}`);
-            url.searchParams.set('mode','adjust');
-            url.searchParams.set('code',k);
-            url.searchParams.set('delta', String(total));
-            if (metaFinal.name != null)    url.searchParams.set('name', String(metaFinal.name));
-            if (metaFinal.expires != null) url.searchParams.set('expires', String(metaFinal.expires));
-            if (metaFinal.price  != null)  url.searchParams.set('price', String(metaFinal.price));
-
-            const rec = (await fetchJSON(url.toString()))[0] || null;
-            if (rec && rec.updated_at) last = String(rec.updated_at);
-            if (rec) notify([rec]);
-            resolvers.forEach(r => r.resolve(rec));
-          } catch (e) {
-            resolvers.forEach(r => r.reject(e));
+  async function get(code){
+    return (await fetchJSON(`${endpoint}?mode=search&code=${encodeURIComponent(String(code))}`))[0]||null;
+  }
+  function adjust(code,delta,meta={}){
+    const k=String(code); let item=queue.get(k);
+    if(!item){ item={total:0,timer:null,resolvers:[],meta:{}}; queue.set(k,item); }
+    item.total+=delta; item.meta={...item.meta,...meta};
+    const p=new Promise((resolve,reject)=>item.resolvers.push({resolve,reject}));
+    if(item.timer) clearTimeout(item.timer);
+    item.timer=setTimeout(async()=>{
+      const total=item.total; const resolvers=item.resolvers.slice(); const metaFinal=item.meta||{}; queue.delete(k);
+      try{
+        const url=new URL(`${endpoint}`);
+        url.searchParams.set('mode','adjust');
+        url.searchParams.set('code',k);
+        url.searchParams.set('delta',String(total));
+        if(metaFinal.name!=null)    url.searchParams.set('name',String(metaFinal.name));
+        if(metaFinal.expires!=null) url.searchParams.set('expires',String(metaFinal.expires));
+        if(metaFinal.price!=null)   url.searchParams.set('price',String(metaFinal.price));
+        const rec=(await fetchJSON(url.toString()))[0]||null;
+        if(rec && rec.updated_at) last=String(rec.updated_at);
+        if(rec) notify([rec]);
+        resolvers.forEach(r=>r.resolve(rec));
+      }catch(e){ resolvers.forEach(r=>r.reject(e)); }
+    },WAIT);
+    return p;
+  }
+  function startPolling(){
+    if(polling) return; polling=true;
+    (async function loop(){
+      while(polling){
+        try{
+          const diff=await fetchJSON(`${endpoint}?mode=changes&since=${encodeURIComponent(last)}`);
+          if(diff.length){
+            diff.sort((a,b)=>String(a.updated_at).localeCompare(String(b.updated_at)));
+            last=String(diff[diff.length-1].updated_at||last);
+            notify(diff);
           }
-        }, WAIT);
-
-        return promise;
+        }catch{}
+        await new Promise(r=>setTimeout(r,1100));
       }
+    })();
+  }
+  return {get,adjust,subscribe,startPolling};
+}
+const client=createGasClient(window.GAS_ENDPOINT);
+let currentCode='';
 
-      function startPolling(){
-        if (polling) return; polling = true;
-        (async function loop(){
-          while (polling){
-            try{
-              const diff = await fetchJSON(`${endpoint}?mode=changes&since=${encodeURIComponent(last)}`);
-              if (diff.length){
-                diff.sort((a,b)=>String(a.updated_at).localeCompare(String(b.updated_at)));
-                last = String(diff[diff.length-1].updated_at || last);
-                notify(diff);
-              }
-            }catch{}
-            await new Promise(r=>setTimeout(r, 1100));
-          }
-        })();
-      }
-      return { get, adjust, subscribe, startPolling };
-    }
-
-    const client = createGasClient(window.GAS_ENDPOINT);
-    let currentCode = '';
-
-    function renderEmpty(code) {
-      const box = qs('#result');
-      box.innerHTML = `
-        <div id="result-empty" class="muted">該当データがありません。</div>
-        <div class="grid" style="gap:8px; border:1px dashed #ddd; border-radius:10px; padding:10px;">
-          <div class="form-row">
-            <div>
-              <label>表示名（任意）</label>
-              <input id="newName" type="text" placeholder="例: セルト液 500mL" />
-            </div>
-            <div>
-              <label>期限（任意）</label>
-              <input id="newExp" type="date" />
-            </div>
+// 空表示（未登録）
+function renderEmpty(code){
+  const box=qs('#result');
+  box.innerHTML=`
+    <div class="card">
+      <div class="muted" style="margin-bottom:8px;">該当データがありません。新規作成できます。</div>
+      <div class="drawer">
+        <div class="formRow">
+          <div>
+            <label class="small muted">表示名（任意）</label>
+            <input id="newName" type="text" placeholder="例: ティッシュペーパー" />
           </div>
           <div>
-            <label>単価（任意・税抜）</label>
-            <input id="newPrice" type="number" step="0.01" inputmode="decimal" placeholder="例: 980" />
-          </div>
-          <div class="actions">
-            <button id="createBtn" class="btn primary">この内容で新規作成（在庫0）</button>
+            <label class="small muted">期限（任意）</label>
+            <input id="newExp" type="date" />
           </div>
         </div>
-      `;
-      qs('#createBtn').onclick = async () => {
-        const meta = {
-          name: qs('#newName').value.trim(),
-          expires: qs('#newExp').value,
-          price: qs('#newPrice').value
-        };
-        try {
-          const rec = await client.adjust(code, 0, meta);
-          if (rec) { renderList([rec]); setStatus('新規作成しました（在庫0）', 'ok'); }
-          else { setStatus('新規作成に失敗しました。', 'err'); }
-        } catch { setStatus('新規作成に失敗しました。', 'err'); }
-        finally { refocus(); }
-      };
+        <div style="margin-top:10px;">
+          <label class="small muted">単価（任意・税抜）</label>
+          <input id="newPrice" type="number" step="0.01" inputmode="decimal" placeholder="例: 100" />
+        </div>
+        <div class="actions" style="margin-top:12px;">
+          <button id="createBtn" class="btn primary">この内容で新規作成（在庫0）</button>
+        </div>
+      </div>
+    </div>`;
+  qs('#createBtn').onclick=async()=>{
+    const meta={ name:qs('#newName').value.trim(), expires:qs('#newExp').value, price:qs('#newPrice').value };
+    try{
+      const rec=await client.adjust(code,0,meta);
+      if(rec){ renderList([rec]); setStatus('新規作成しました。','ok'); }
+      else setStatus('新規作成に失敗しました。','err');
+    }catch{ setStatus('新規作成に失敗しました。','err'); }
+    finally{ refocus(); }
+  };
+}
+
+// 在庫カード
+function renderList(list){
+  const box=qs('#result'); box.innerHTML='';
+  if(!list || list.length===0){ renderEmpty(qs('#codeInput').value.trim()); return; }
+
+  const item=list[0];
+  const code=String(item.code||'');
+  const name=item.name||'';
+  const exp =fmtDateStr(item.expires_at||'');
+  const price=isFinite(Number(item.unit_price))?Number(item.unit_price):'';
+  const srvStock=Number(item.stock||0);
+  currentCode=code;
+
+  confirmedStock.set(code,srvStock);
+  const target=displayTarget.has(code)?Math.max(0,Number(displayTarget.get(code))):srvStock;
+  localDelta.set(code,target-srvStock);
+  displayTarget.set(code,target);
+
+  const card=document.createElement('div'); card.className='card';
+  card.innerHTML=`
+    <div class="titleRow">
+      <div class="name" id="dispName">${name || '(名称未設定)'}</div>
+      <button class="btn small" id="editBtn" style="padding:6px 10px; font-size:13px;">編集</button>
+    </div>
+    <div class="chipRow">
+      ${chip(`<span class="muted small">code:</span> <span class="code">${code}</span>`)}
+      ${chip(`<span class="muted small">期限:</span> <span id="dispExp">${exp||'-'}</span>`)}
+      ${chip(`<span class="muted small">単価:</span> <span id="dispPrice">${price!==''?price:'-'}</span>`)}
+    </div>
+
+    <div class="stockWrap">
+      <div class="${badgeClass(target)}" id="stockBadge" data-stock="${target}">${target}</div>
+      <div class="udCol">
+        <button class="btn" data-delta="-1" data-code="${code}">-1</button>
+        <button class="btn" data-delta="+1" data-code="${code}">+1</button>
+      </div>
+    </div>
+
+    <div class="drawer" id="editDrawer" style="display:none;">
+      <div class="formRow">
+        <div>
+          <label class="small muted">表示名</label>
+          <input id="editName" type="text" value="${name.replace(/"/g,'&quot;')}" />
+        </div>
+        <div>
+          <label class="small muted">期限</label>
+          <input id="editExp" type="date" value="${exp || ''}" />
+        </div>
+      </div>
+      <div style="margin-top:10px;">
+        <label class="small muted">単価</label>
+        <input id="editPrice" type="number" step="0.01" inputmode="decimal" value="${price!==''?price:''}" />
+      </div>
+      <div class="actions" style="margin-top:12px;">
+        <button class="btn primary" id="saveEdit">保存</button>
+        <button class="btn" id="cancelEdit">キャンセル</button>
+      </div>
+    </div>
+  `;
+  box.appendChild(card);
+
+  const badgeEl=card.querySelector('#stockBadge');
+  const minusBtn=card.querySelector('button[data-delta="-1"]');
+  if(target<=0){ minusBtn.disabled=true; minusBtn.classList.add('warn'); }
+
+  // 編集ドロワー
+  const editBtn=card.querySelector('#editBtn');
+  const drawer=card.querySelector('#editDrawer');
+  const saveBtn=card.querySelector('#saveEdit');
+  const cancelBtn=card.querySelector('#cancelEdit');
+  const dispName=card.querySelector('#dispName');
+  const dispExp=card.querySelector('#dispExp');
+  const dispPrice=card.querySelector('#dispPrice');
+
+  editBtn.onclick=()=>{ drawer.style.display = drawer.style.display==='none' ? '' : 'none'; };
+  cancelBtn.onclick=()=>{ drawer.style.display='none'; };
+
+  saveBtn.onclick=async ()=>{
+    const newName = card.querySelector('#editName').value.trim();
+    const newExp  = card.querySelector('#editExp').value;
+    const newPrice= card.querySelector('#editPrice').value;
+    setStatus('保存中…');
+    try{
+      const rec=await client.adjust(code,0,{name:newName,expires:newExp,price:newPrice});
+      if(rec){
+        dispName.textContent = rec.name || '(名称未設定)';
+        dispExp.textContent  = fmtDateStr(rec.expires_at||'') || '-';
+        dispPrice.textContent= isFinite(Number(rec.unit_price))?Number(rec.unit_price):'-';
+        drawer.style.display='none';
+        setStatus('保存しました。','ok');
+      }
+    }catch{ setStatus('保存に失敗しました。','err'); }
+    finally{ refocus(); }
+  };
+
+  // ± ボタン（極値のみ表示）
+  card.addEventListener('click', async (ev)=>{
+    const btn=ev.target.closest('button[data-delta]'); if(!btn) return;
+    const k=btn.getAttribute('data-code');
+    const d=parseFloat(btn.getAttribute('data-delta'));
+    const base=Number(confirmedStock.get(k)??0);
+    const nextSum=(localDelta.get(k)||0)+d;
+    const nextTarget=Math.max(0, base+nextSum);
+    if(d<0 && nextTarget<0){ setStatus('在庫は 0 未満にできません。','err'); return; }
+
+    localDelta.set(k,nextSum);
+    displayTarget.set(k,nextTarget);
+    badgeEl.className = badgeClass(nextTarget);
+    badgeEl.textContent = String(nextTarget);
+
+    setStatus(`在庫を ${d>0?'+':''}${d}（同期中）…`);
+    if(minusBtn){
+      if(nextTarget<=0){ minusBtn.disabled=true; minusBtn.classList.add('warn'); }
+      else { minusBtn.disabled=false; minusBtn.classList.remove('warn'); }
     }
 
-    function renderList(list){
-      const box = qs('#result'); box.innerHTML = '';
-      if (!list || list.length === 0){ renderEmpty(qs('#codeInput').value.trim()); return; }
+    try{
+      const rec=await client.adjust(k,d);
+      if(rec){
+        const srv=Number(rec.stock||0);
+        confirmedStock.set(k,srv);
+        const targetNow=Number(displayTarget.get(k)??srv);
+        localDelta.set(k,targetNow-srv);
+        const toShow=(localDelta.get(k)||0)===0?srv:targetNow;
+        badgeEl.className=badgeClass(toShow);
+        badgeEl.textContent=String(toShow);
+        setStatus('在庫を更新しました。','ok');
+      }
+    }catch{
+      const baseNow=Number(confirmedStock.get(k)??0);
+      localDelta.set(k,0); displayTarget.set(k,baseNow);
+      badgeEl.className=badgeClass(baseNow); badgeEl.textContent=String(baseNow);
+      if(minusBtn){
+        if(baseNow<=0){ minusBtn.disabled=true; minusBtn.classList.add('warn'); }
+        else { minusBtn.disabled=false; minusBtn.classList.remove('warn'); }
+      }
+      setStatus('在庫更新に失敗しました。','err');
+    }finally{ refocus(); }
+  });
+}
 
-      const item = list[0];
-      const code = String(item.code ?? '');
-      const name = item.name ?? '';
-      const expires = item.expires_at ?? '';
-      const unitPrice = Number(item.unit_price ?? 0);
-      const serverStock = Number(item.stock ?? 0);
-      currentCode = code;
+// 初期化
+(function init(){
+  const input=qs('#codeInput'); const btn=qs('#searchBtn');
 
-      confirmedStock.set(code, serverStock);
+  input.addEventListener('keydown',(e)=>{ if(e.key==='Enter'||e.key==='Tab'){ e.preventDefault(); btn.click(); } });
 
-      const target = (displayTarget.has(code))
-        ? Math.max(0, Number(displayTarget.get(code)))
-        : serverStock;
+  btn.addEventListener('click', async ()=>{
+    const code=input.value.trim();
+    if(!code){ setStatus('code が空です。バーコードを読み取ってください。','err'); return; }
 
-      localDelta.set(code, target - serverStock);
-      displayTarget.set(code, target);
+    qs('#result').innerHTML = `
+      <div class="card">
+        <div class="muted small">検索中…</div>
+        <div class="chipRow" style="margin-top:6px;">${chip(`<span class="muted small">code:</span> <span class="code">${code}</span>`)}</div>
+      </div>`;
+    setStatus('検索中…');
 
-      const wrap = document.createElement('div');
-      wrap.className = 'item';
+    try{
+      const rec=await client.get(code);
+      if(rec){ renderList([rec]); setStatus('検索完了（1件）','ok'); client.startPolling(); }
+      else { renderEmpty(code); setStatus('該当なし：新規作成できます','muted'); }
+    }catch{ setStatus('検索に失敗しました。','err'); }
+    finally{ refocus(); }
+  });
 
-      const showStock = target;
-      wrap.innerHTML = `
-        <div>
-          <div style="display:flex; align-items:center; gap:8px;">
-            <strong id="dispName">${name || '(名称未設定)'}</strong>
-            <button class="btn" id="editBtn" style="padding:4px 8px;">編集</button>
-          </div>
-          <div class="meta">
-            <div>code: <span class="code">${code}</span></div>
-            <div>期限: <code id="dispExp">${expires || '-'}</code>　単価: <code id="dispPrice">${isFinite(unitPrice)? unitPrice : '-'}</code></div>
-          </div>
-          <div class="edit-panel" id="editPanel" style="display:none; margin-top:8px;">
-            <div class="form-row">
-              <div>
-                <label>表示名</label>
-                <input id="editName" type="text" value="${name?.replace(/"/g,'&quot;') || ''}" />
-              </div>
-              <div>
-                <label>期限</label>
-                <input id="editExp" type="date" value="${expires || ''}" />
-              </div>
-            </div>
-            <div style="margin-top:8px;">
-              <label>単価</label>
-              <input id="editPrice" type="number" step="0.01" inputmode="decimal" value="${isFinite(unitPrice)? unitPrice : ''}" />
-            </div>
-            <div class="actions" style="margin-top:8px;">
-              <button class="btn primary" id="saveEdit">保存</button>
-              <button class="btn" id="cancelEdit">キャンセル</button>
-            </div>
-          </div>
-        </div>
-        <div class="${stockBadgeClass(showStock)}" data-stock="${showStock}">${showStock}</div>
-        <div>
-          <button class="btn" data-delta="-1" data-code="${code}">-1</button>
-          <button class="btn" data-delta="+1" data-code="${code}">+1</button>
-        </div>
-      `;
-      box.appendChild(wrap);
+  // 上部 +1/-1（カード未表示時の押下にも対応）
+  qs('#plusBtn').addEventListener('click', async ()=>{
+    const code=input.value.trim(); if(!code){ setStatus('先に検索またはスキャンしてください。','err'); return; }
+    const badgeEl=qs('#stockBadge'); const base=Number(confirmedStock.get(code)??0);
+    const nextSum=(localDelta.get(code)||0)+1; const nextTarget=Math.max(0, base+nextSum);
+    localDelta.set(code,nextSum); displayTarget.set(code,nextTarget);
+    if(badgeEl){ badgeEl.className=badgeClass(nextTarget); badgeEl.textContent=String(nextTarget); }
+    setStatus('在庫を +1（同期中）…');
+    try{
+      const rec=await client.adjust(code,+1);
+      if(rec && badgeEl){
+        const srv=Number(rec.stock||0); confirmedStock.set(code,srv);
+        const targetNow=Number(displayTarget.get(code)??srv); localDelta.set(code,targetNow-srv);
+        const toShow=(localDelta.get(code)||0)===0?srv:targetNow;
+        badgeEl.className=badgeClass(toShow); badgeEl.textContent=String(toShow);
+        setStatus('在庫を +1 しました。','ok');
+      }
+    }catch{
+      localDelta.set(code,0); displayTarget.set(code,base);
+      if(badgeEl){ badgeEl.className=badgeClass(base); badgeEl.textContent=String(base); }
+      setStatus('在庫更新に失敗しました。','err');
+    }finally{ refocus(); }
+  });
 
-      const badgeEl = wrap.querySelector('.stock.badge, .stock.badge.low, .stock.badge.zero');
-      const minusBtn = wrap.querySelector('button[data-delta="-1"]');
-      if (showStock <= 0) { minusBtn.disabled = true; minusBtn.classList.add('warn'); }
+  qs('#minusBtn').addEventListener('click', async ()=>{
+    const code=input.value.trim(); if(!code){ setStatus('先に検索またはスキャンしてください。','err'); return; }
+    const badgeEl=qs('#stockBadge'); const base=Number(confirmedStock.get(code)??0);
+    const nextSum=(localDelta.get(code)||0)-1; const nextTarget=Math.max(0, base+nextSum);
+    if(nextTarget<0){ setStatus('在庫は 0 未満にできません。','err'); return; }
+    localDelta.set(code,nextSum); displayTarget.set(code,nextTarget);
+    if(badgeEl){ badgeEl.className=badgeClass(nextTarget); badgeEl.textContent=String(nextTarget); }
+    setStatus('在庫を -1（同期中）…');
+    try{
+      const rec=await client.adjust(code,-1);
+      if(rec && badgeEl){
+        const srv=Number(rec.stock||0); confirmedStock.set(code,srv);
+        const targetNow=Number(displayTarget.get(code)??srv); localDelta.set(code,targetNow-srv);
+        const toShow=(localDelta.get(code)||0)===0?srv:targetNow;
+        badgeEl.className=badgeClass(toShow); badgeEl.textContent=String(toShow);
+        setStatus('在庫を -1 しました。','ok');
+      }
+    }catch{
+      localDelta.set(code,0); displayTarget.set(code,base);
+      if(badgeEl){ badgeEl.className=badgeClass(base); badgeEl.textContent=String(base); }
+      setStatus('在庫更新に失敗しました。','err');
+    }finally{ refocus(); }
+  });
 
-      // 編集UIのイベント
-      const editBtn   = wrap.querySelector('#editBtn');
-      const editPanel = wrap.querySelector('#editPanel');
-      const saveEdit  = wrap.querySelector('#saveEdit');
-      const cancelEdit= wrap.querySelector('#cancelEdit');
-      const dispName  = wrap.querySelector('#dispName');
-      const dispExp   = wrap.querySelector('#dispExp');
-      const dispPrice = wrap.querySelector('#dispPrice');
-
-      editBtn.onclick = () => { editPanel.style.display = editPanel.style.display === 'none' ? '' : 'none'; };
-      cancelEdit.onclick = () => { editPanel.style.display = 'none'; };
-
-      saveEdit.onclick = async () => {
-        const newName  = wrap.querySelector('#editName').value.trim();
-        const newExp   = wrap.querySelector('#editExp').value;
-        const newPrice = wrap.querySelector('#editPrice').value;
-
-        setStatus('メタ情報を保存中…');
-        try {
-          // delta=0 でメタ更新（debounce合算される点に注意）
-          const rec = await client.adjust(code, 0, { name:newName, expires:newExp, price:newPrice });
-          if (rec) {
-            dispName.textContent = rec.name || '(名称未設定)';
-            dispExp.textContent  = rec.expires_at || '-';
-            dispPrice.textContent= isFinite(Number(rec.unit_price)) ? Number(rec.unit_price) : '-';
-            editPanel.style.display = 'none';
-            setStatus('保存しました。', 'ok');
-          }
-        } catch {
-          setStatus('保存に失敗しました。', 'err');
-        } finally { refocus(); }
-      };
-
-      // 在庫±のイベント（既存ロジック）
-      box.onclick = async (ev) => {
-        const btn = ev.target.closest('button.btn'); if (!btn) return;
-        if (btn.id === 'editBtn' || btn.id === 'saveEdit' || btn.id === 'cancelEdit') return; // 編集系は別処理
-
-        const codeAttr = btn.getAttribute('data-code');
-        const deltaAttr = btn.getAttribute('data-delta');
-        if (!deltaAttr) return;
-
-        const delta = parseFloat(deltaAttr);
-        const base = Number(confirmedStock.get(codeAttr) ?? 0);
-        const nextSum = (localDelta.get(codeAttr) || 0) + delta;
-        const nextTarget = Math.max(0, base + nextSum);
-        if (delta < 0 && nextTarget < 0) { setStatus('在庫はこれ以上減らせません（0未満禁止）', 'err'); return; }
-
-        localDelta.set(codeAttr, nextSum);
-        displayTarget.set(codeAttr, nextTarget);
-        setBadgeStock(badgeEl, nextTarget);
-        setStatus(`在庫を ${delta>0?'+':''}${delta}（同期中）…`);
-
-        if (minusBtn) {
-          if (nextTarget <= 0) { minusBtn.disabled = true; minusBtn.classList.add('warn'); }
-          else { minusBtn.disabled = false; minusBtn.classList.remove('warn'); }
-        }
-
-        try {
-          const rec = await client.adjust(codeAttr, delta);
-          if (rec) {
-            const srv = Number(rec.stock || 0);
-            confirmedStock.set(codeAttr, srv);
-            const targetNow = Number(displayTarget.get(codeAttr) ?? srv);
-            localDelta.set(codeAttr, targetNow - srv);
-            const toShow = (localDelta.get(codeAttr) || 0) === 0 ? srv : targetNow;
-            setBadgeStock(badgeEl, toShow);
-            setStatus('在庫を更新しました。', 'ok');
-          }
-        } catch {
-          const baseNow = Number(confirmedStock.get(codeAttr) ?? 0);
-          localDelta.set(codeAttr, 0); displayTarget.set(codeAttr, baseNow);
-          setBadgeStock(badgeEl, baseNow);
-          if (minusBtn) {
-            if (baseNow <= 0) { minusBtn.disabled = true; minusBtn.classList.add('warn'); }
-            else { minusBtn.disabled = false; minusBtn.classList.remove('warn'); }
-          }
-          setStatus('在庫更新に失敗しました。', 'err');
-        } finally { refocus(); }
-      };
+  client.subscribe(list=>{
+    if(!currentCode) return;
+    const rec=list.find(r=>String(r.code)===String(currentCode));
+    if(!rec) return;
+    const code=String(rec.code); const srv=Number(rec.stock||0);
+    const target=Number(displayTarget.get(code)??srv); const ld=Number(localDelta.get(code)||0);
+    if(ld!==0){
+      if(ld>0 && srv<target) return;
+      if(ld<0 && srv>target) return;
     }
+    confirmedStock.set(code,srv);
+    localDelta.set(code,0); displayTarget.set(code,srv);
+    renderList([rec]);
+  });
 
-    (function init(){
-      const input = qs('#codeInput'); const btn = qs('#searchBtn');
-
-      input.addEventListener('keydown', (e)=>{ if (e.key === 'Enter' || e.key === 'Tab'){ e.preventDefault(); btn.click(); } });
-
-      btn.addEventListener('click', async ()=>{
-        const code = input.value.trim();
-        if (!code){ setStatus('code が空です。バーコードを読み取ってください。', 'err'); return; }
-
-        qs('#result').innerHTML = `
-          <div class="item">
-            <div>
-              <div><strong>(検索中)</strong></div>
-              <div class="muted">code: <span class="code">${code}</span></div>
-            </div>
-            <div class="stock badge" data-stock="0">…</div>
-            <div></div>
-          </div>`;
-        setStatus('検索中…');
-
-        try {
-          const rec = await client.get(code);
-          if (rec) { renderList([rec]); setStatus('検索完了（1件）', 'ok'); client.startPolling(); }
-          else { renderEmpty(code); setStatus('該当なし：新規作成できます', 'muted'); }
-        } catch { setStatus('検索に失敗しました。', 'err'); }
-        finally { refocus(); }
-      });
-
-      qs('#plusBtn').addEventListener('click', async ()=>{
-        const code = input.value.trim();
-        if (!code){ setStatus('先に検索またはスキャンしてください。', 'err'); return; }
-        const badgeEl = qs('.stock.badge, .stock.badge.low, .stock.badge.zero');
-        const base = Number(confirmedStock.get(code) ?? 0);
-        const nextSum = (localDelta.get(code) || 0) + 1;
-        const nextTarget = Math.max(0, base + nextSum);
-
-        localDelta.set(code, nextSum);
-        displayTarget.set(code, nextTarget);
-        if (badgeEl) setBadgeStock(badgeEl, nextTarget);
-        setStatus('在庫を +1（同期中）…');
-
-        try {
-          const rec = await client.adjust(code, +1);
-          if (rec && badgeEl) {
-            const srv = Number(rec.stock || 0);
-            confirmedStock.set(code, srv);
-            const targetNow = Number(displayTarget.get(code) ?? srv);
-            localDelta.set(code, targetNow - srv);
-            setBadgeStock(badgeEl, (localDelta.get(code)||0)===0 ? srv : targetNow);
-            setStatus('在庫を +1 しました。', 'ok');
-          }
-        } catch {
-          localDelta.set(code, 0); displayTarget.set(code, base);
-          if (badgeEl) setBadgeStock(badgeEl, base);
-          setStatus('在庫更新に失敗しました。', 'err');
-        } finally { refocus(); }
-      });
-
-      qs('#minusBtn').addEventListener('click', async ()=>{
-        const code = input.value.trim();
-        if (!code){ setStatus('先に検索またはスキャンしてください。', 'err'); return; }
-        const badgeEl = qs('.stock.badge, .stock.badge.low, .stock.badge.zero');
-        const base = Number(confirmedStock.get(code) ?? 0);
-        const nextSum = (localDelta.get(code) || 0) - 1;
-        const nextTarget = Math.max(0, base + nextSum);
-        if (nextTarget < 0){ setStatus('在庫は 0 未満にできません。', 'err'); return; }
-
-        localDelta.set(code, nextSum);
-        displayTarget.set(code, nextTarget);
-        if (badgeEl) setBadgeStock(badgeEl, nextTarget);
-        setStatus('在庫を -1（同期中）…');
-
-        try {
-          const rec = await client.adjust(code, -1);
-          if (rec && badgeEl) {
-            const srv = Number(rec.stock || 0);
-            confirmedStock.set(code, srv);
-            const targetNow = Number(displayTarget.get(code) ?? srv);
-            localDelta.set(code, targetNow - srv);
-            setBadgeStock(badgeEl, (localDelta.get(code)||0)===0 ? srv : targetNow);
-            setStatus('在庫を -1 しました。', 'ok');
-          }
-        } catch {
-          localDelta.set(code, 0); displayTarget.set(code, base);
-          if (badgeEl) setBadgeStock(badgeEl, base);
-          setStatus('在庫更新に失敗しました。', 'err');
-        } finally { refocus(); }
-      });
-
-      client.subscribe(list => {
-        if (!currentCode) return;
-        const rec = list.find(r => String(r.code) === String(currentCode));
-        if (!rec) return;
-
-        const code = String(rec.code);
-        const srv  = Number(rec.stock || 0);
-        const target = Number(displayTarget.get(code) ?? srv);
-        const ld = Number(localDelta.get(code) || 0);
-
-        if (ld !== 0) {
-          if (ld > 0 && srv < target) return;
-          if (ld < 0 && srv > target) return;
-        }
-
-        confirmedStock.set(code, srv);
-        localDelta.set(code, 0);
-        displayTarget.set(code, srv);
-        renderList([rec]);
-      });
-
-      const fromURL = window.__initialCode;
-      if (fromURL){ input.value = fromURL; btn.click(); } else { setTimeout(()=> input.focus(), 0); }
-    })();
-  </script>
+  const fromURL=window.__initialCode;
+  if(fromURL){ input.value=fromURL; btn.click(); } else { setTimeout(()=>input.focus(),0); }
+})();
+</script>
 </body>
 </html>
+
 
 
 
