@@ -21,7 +21,7 @@
     .btn { padding: 10px 14px; border: 1px solid #ddd; border-radius: 8px; background: #fafafa; cursor: pointer; text-decoration:none; color:inherit; display:inline-block; }
     .btn.primary { background: #1a73e8; border-color: #1a73e8; color: #fff; }
     .btn.warn { background: #ffe9e9; border-color: #f3b4b4; color: #b00020; }
-    input[type="text"]{ width: 100%; padding: 10px; font-size: 16px; box-sizing: border-box; }
+    input[type="text"], input[type="date"], input[type="number"]{ width: 100%; padding: 10px; font-size: 16px; box-sizing: border-box; }
     .grid { display: grid; gap: 10px; }
     .actions { display: flex; gap: 10px; flex-wrap: wrap; }
     .item { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; padding: 10px; border: 1px solid #eee; border-radius: 10px; }
@@ -30,13 +30,16 @@
     .stock.badge.zero { background: #ffebee; border-color: #ffcdd2; color: #b00020; }
     details summary { cursor: pointer; }
     #result-empty { padding: 8px 0; }
+    .meta { font-size: 13px; color: #444; }
+    .meta code { background:#f3f6fb; border:1px solid #e3e8f0; padding:1px 4px; border-radius:4px; }
+    .form-row { display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
   </style>
 
   <!-- 初期コード読込＆ショートカット起動リンク（即生成） -->
   <script>
     // ★ あなたの GAS /exec
-    window.GAS_ENDPOINT = 'https://script.google.com/macros/s/AKfycby80_bOSTAwaWqxKJgpPLLylsJRLKcxjLnk8sXXeXGKa7xcjQUNHPIaJ86wjTTYf10/exec';
-    window.SHORTCUT_NAME = 'ScanToWeb';
+    window.GAS_ENDPOINT = 'https://script.google.com/macros/s/AKfycbzWjtTIoKKV_a30WnTPPJlvhqQ_ywXjtimSGI29R7pCPG8ZzUJ0sZjqN9hafFfD24Zx/exec'; // ←差し替え
+    window.SHORTCUT_NAME = 'ScanToWeb'; // ←差し替え
     window.DEBUG = false; // trueで生レスポンス表示
 
     // ?code を先に拾う
@@ -121,7 +124,7 @@
 
       // デバウンス合算キュー：codeごとに「最後の入力からWAIT ms後」に1回だけ送る
       const WAIT = 200; // 入力が止まってから送る遅延
-      const queue = new Map(); // code -> { total:number, timer:any, resolvers:Array }
+      const queue = new Map(); // code -> { total:number, timer:any, resolvers:Array, meta?:{} }
 
       async function fetchJSON(url) {
         const res = await fetch(url, { cache: 'no-store' });
@@ -136,21 +139,32 @@
         return (await fetchJSON(`${endpoint}?mode=search&code=${encodeURIComponent(String(code))}`))[0] || null;
       }
 
-      function adjust(code, delta){
+      // adjust: delta を合算。meta があれば最終リクエストに付与（新規作成やメタ更新用）
+      function adjust(code, delta, meta={}) {
         const k = String(code);
         let item = queue.get(k);
-        if (!item) { item = { total: 0, timer: null, resolvers: [] }; queue.set(k, item); }
+        if (!item) { item = { total: 0, timer: null, resolvers: [], meta: {} }; queue.set(k, item); }
         item.total += delta;
+        // metaは上書き優先（直近の入力を使う）
+        item.meta = { ...item.meta, ...meta };
 
         const promise = new Promise((resolve, reject)=> item.resolvers.push({resolve, reject}));
 
         // ← 重要：リセット可能なデバウンス（最後の入力から WAIT ms）
         if (item.timer) clearTimeout(item.timer);
         item.timer = setTimeout(async () => {
-          const total = item.total; const resolvers = item.resolvers.slice();
+          const total = item.total; const resolvers = item.resolvers.slice(); const metaFinal = item.meta || {};
           queue.delete(k);
           try {
-            const rec = (await fetchJSON(`${endpoint}?mode=adjust&code=${encodeURIComponent(k)}&delta=${encodeURIComponent(total)}`))[0] || null;
+            const url = new URL(`${endpoint}`);
+            url.searchParams.set('mode','adjust');
+            url.searchParams.set('code',k);
+            url.searchParams.set('delta', String(total));
+            if (metaFinal.name != null)    url.searchParams.set('name', String(metaFinal.name));
+            if (metaFinal.expires != null) url.searchParams.set('expires', String(metaFinal.expires));
+            if (metaFinal.price != null)   url.searchParams.set('price', String(metaFinal.price));
+
+            const rec = (await fetchJSON(url.toString()))[0] || null;
             if (rec && rec.updated_at) last = String(rec.updated_at);
             if (rec) notify([rec]); // 最新確定を配布
             resolvers.forEach(r => r.resolve(rec));
@@ -190,14 +204,37 @@
       const box = qs('#result');
       box.innerHTML = `
         <div id="result-empty" class="muted">該当データがありません。</div>
-        <div><button id="createBtn" class="btn">在庫0で新規作成</button></div>
+        <div class="grid" style="gap:8px; border:1px dashed #ddd; border-radius:10px; padding:10px;">
+          <div class="form-row">
+            <div>
+              <label>表示名（任意）</label>
+              <input id="newName" type="text" placeholder="例: セルト液 500mL" />
+            </div>
+            <div>
+              <label>期限（任意）</label>
+              <input id="newExp" type="date" />
+            </div>
+          </div>
+          <div>
+            <label>単価（任意・税抜）</label>
+            <input id="newPrice" type="number" step="0.01" inputmode="decimal" placeholder="例: 980" />
+          </div>
+          <div class="actions">
+            <button id="createBtn" class="btn primary">この内容で新規作成（在庫0）</button>
+          </div>
+        </div>
       `;
       qs('#createBtn').onclick = async () => {
+        const meta = {
+          name: qs('#newName').value.trim(),
+          expires: qs('#newExp').value,   // 空文字可
+          price: qs('#newPrice').value    // 空文字可
+        };
         try {
-          await client.adjust(code, +1);
-          const rec = await client.adjust(code, -1);
-          if (rec) renderList([rec]);
-          setStatus('新規作成しました（在庫0）', 'ok');
+          // delta=0 で作成＋メタ保存
+          const rec = await client.adjust(code, 0, meta);
+          if (rec) { renderList([rec]); setStatus('新規作成しました（在庫0）', 'ok'); }
+          else { setStatus('新規作成に失敗しました。', 'err'); }
         } catch { setStatus('新規作成に失敗しました。', 'err'); }
         finally { refocus(); }
       };
@@ -210,6 +247,8 @@
       const item = list[0];
       const code = String(item.code ?? '');
       const name = item.name ?? '';
+      const expires = item.expires_at ?? '';
+      const unitPrice = Number(item.unit_price ?? 0);
       const serverStock = Number(item.stock ?? 0);
       currentCode = code;
 
@@ -218,7 +257,7 @@
 
       // UI目標（既存の localDelta を考慮）
       const target = (displayTarget.has(code))
-        ? Math.max(0, Number(displayTarget.get(code)))  // 既存ターゲット尊重
+        ? Math.max(0, Number(displayTarget.get(code)))
         : serverStock;
 
       // localDelta を target と確定値の差で更新（負方向も許容）
@@ -229,10 +268,16 @@
       wrap.className = 'item';
 
       const showStock = target; // UIは常に「確定＋合計Δ」のみ
+      const metaHtml = `
+        <div class="meta">
+          <div>code: <span class="code">${code}</span></div>
+          <div>期限: <code>${expires || '-'}</code>　単価: <code>${isFinite(unitPrice)? unitPrice : '-'}</code></div>
+        </div>`;
+
       wrap.innerHTML = `
         <div>
           <div><strong>${name || '(名称未設定)'}</strong></div>
-          <div class="muted">code: <span class="code">${code}</span></div>
+          ${metaHtml}
         </div>
         <div class="${stockBadgeClass(showStock)}" data-stock="${showStock}">${showStock}</div>
         <div>
@@ -324,7 +369,7 @@
         try {
           const rec = await client.get(code);
           if (rec) { renderList([rec]); setStatus('検索完了（1件）', 'ok'); client.startPolling(); }
-          else { renderEmpty(code); setStatus('該当なし', 'muted'); }
+          else { renderEmpty(code); setStatus('該当なし：新規作成できます', 'muted'); }
         } catch { setStatus('検索に失敗しました。', 'err'); }
         finally { refocus(); }
       });
@@ -403,10 +448,8 @@
         const ld = Number(localDelta.get(code) || 0);
 
         if (ld !== 0) {
-          // 上昇中：srv が target に到達（または超過）したら採用、未満は破棄
-          if (ld > 0 && srv < target) return;
-          // 下降中：srv が target 以下に到達したら採用、超過は破棄
-          if (ld < 0 && srv > target) return;
+          if (ld > 0 && srv < target) return;   // 上昇中：未到達は破棄
+          if (ld < 0 && srv > target) return;   // 下降中：未到達は破棄
         }
 
         confirmedStock.set(code, srv);
