@@ -27,7 +27,7 @@
     .stock.badge.zero { background: #ffebee; border-color: #ffcdd2; color: #b00020; }
 
     #cameraWrap { display:none; position: relative; border:1px solid #eee; border-radius: 12px; overflow:hidden; background:#000; }
-    #preview { width: 100%; height: auto; display:block; }
+    #preview { width: 100%; height: auto; display:block; background:#000; }
     #scanLine {
       position:absolute; left:0; right:0; top:50%; height:2px; background:rgba(0,255,0,0.8);
       transform: translateY(-50%); animation: scan 2s linear infinite;
@@ -158,7 +158,7 @@
       };
     }
 
-    // ===== GAS クライアント（A案 v2: アダプティブポーリング＋コアレッサ）=====
+    // ===== GAS クライアント（アダプティブポーリング＋コアレッサ）=====
     function createGasClient({ endpoint, activeMs = 1000, idleMs = 5000 }) {
       const map = new Map();   let last = '';  const listeners = new Set();
       const queue = new Map(); let flushTimer = null;
@@ -323,10 +323,10 @@
     })();
   </script>
 
-  <!-- ===== ZXing（UMD版）を読み込み → グローバル ZXing で使う ===== -->
+  <!-- ===== ZXing（UMD） ===== -->
   <script src="https://unpkg.com/@zxing/library@0.19.1/build/zxing.min.js"></script>
   <script>
-    // ===== カメラ・スキャン制御（ZXing） =====
+    // ===== カメラ・スキャン制御（黒画面対策：先に getUserMedia で映像を出す） =====
     let codeReader = null;
     let scanning = false;
     let lastHitAt = 0;
@@ -335,19 +335,21 @@
     const $wrap = document.getElementById('cameraWrap');
     const $video = document.getElementById('preview');
     const $toggle = document.getElementById('scanToggleBtn');
-    const $input = document.getElementById('codeInput');
+    const $input  = document.getElementById('codeInput');
     const $search = document.getElementById('searchBtn');
 
-    function vibrate(ms=80){ if (navigator.vibrate) try{ navigator.vibrate(ms); }catch{} }
+    function vibrate(ms=60){ if (navigator.vibrate) try{ navigator.vibrate(ms); }catch{} }
 
-    async function chooseBackCamera(devices){
-      // 背面っぽい名称 or environment を優先
-      const lower = s => (s||'').toLowerCase();
-      let cand = devices.find(d => /back|rear|environment/.test(lower(d.label)));
-      return cand ? cand.deviceId : (devices[0] && devices[0].deviceId);
+    async function listVideoInputs() {
+      const devs = await navigator.mediaDevices.enumerateDevices();
+      return devs.filter(d => d.kind === 'videoinput');
+    }
+    function preferBack(devs) {
+      const low = s => (s || '').toLowerCase();
+      return devs.find(d => /back|rear|environment/.test(low(d.label))) || devs[0];
     }
 
-    async function startScan(){
+    async function startScan() {
       if (scanning) return;
       scanning = true;
       $wrap.style.display = 'block';
@@ -355,37 +357,44 @@
 
       if (!codeReader) codeReader = new ZXing.BrowserMultiFormatReader();
 
-      try{
-        const devices = await ZXing.BrowserMultiFormatReader.listVideoInputDevices();
-        const deviceId = await chooseBackCamera(devices);
-        if (!deviceId){ setStatus('カメラが見つかりません。', 'err'); stopScan(); return; }
+      try {
+        // 1) カメラ列挙 → 背面っぽいものを選択
+        const inputs = await listVideoInputs();
+        if (!inputs.length) throw new Error('カメラが見つかりません');
+        const picked = preferBack(inputs);
 
-        await codeReader.decodeFromVideoDevice(deviceId, $video, (result, err, controls) => {
-          if (result){
+        // 2) まず video に確実に映像を出す（黒画面対策の要）
+        const constraints = {
+          video: picked
+            ? { deviceId: { exact: picked.deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }
+            : { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false
+        };
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        currentStream = stream;
+        $video.srcObject = stream;
+        await $video.play(); // 自動再生させる（iOS対策で muted/playsinline 済）
+
+        // 3) 同じ stream を ZXing に渡してデコード開始
+        await codeReader.decodeFromStream(stream, $video, (result, err) => {
+          if (result) {
             const text = String(result.getText() || '').trim();
             const now = Date.now();
             if (!text) return;
-            // 同じ値の連続ヒットを抑制（800ms）
-            if (now - lastHitAt < 800) return;
+            if (now - lastHitAt < 800) return; // 連続ヒット抑制
             lastHitAt = now;
-
-            // 反応（バイブ）→ 入力欄に反映 → 自動検索
-            vibrate(60);
+            vibrate();
             $input.value = text;
             $search.click();
           }
           if (err && !(err instanceof ZXing.NotFoundException)) {
-            // デコード以外のエラーのみ表示
             console.warn(err);
           }
         });
 
-        // 保存して停止時に明示停止
-        currentStream = $video.srcObject;
-
-      }catch(e){
+      } catch (e) {
         console.error(e);
-        setStatus('カメラ起動に失敗しました。権限やHTTPSを確認してください。', 'err');
+        setStatus(`カメラ起動エラー: ${e.name || e.message}`, 'err');
         stopScan();
       }
     }
@@ -394,27 +403,22 @@
       scanning = false;
       $wrap.style.display = 'none';
       $toggle.textContent = 'カメラでスキャン開始';
-      try{
-        if (codeReader) codeReader.reset();
-      }catch{}
-      try{
-        if (currentStream){
+      try { if (codeReader) codeReader.reset(); } catch {}
+      try {
+        if (currentStream) {
           currentStream.getTracks().forEach(t => t.stop());
           currentStream = null;
         }
-      }catch{}
+      } catch {}
     }
 
-    document.getElementById('scanToggleBtn').addEventListener('click', ()=>{
-      if (scanning) stopScan(); else startScan();
-    });
-
-    // 画面遷移・非表示で安全に停止
+    $toggle.addEventListener('click', ()=>{ if (scanning) stopScan(); else startScan(); });
     document.addEventListener('visibilitychange', ()=>{ if (document.hidden) stopScan(); });
     window.addEventListener('pagehide', ()=> stopScan());
   </script>
 </body>
 </html>
+
 
 
 
