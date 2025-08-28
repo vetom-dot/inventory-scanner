@@ -1,427 +1,329 @@
 <!doctype html>
 <html lang="ja">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>病院在庫管理（極値のみ表示・高速＆即時反映）</title>
-
-  <!-- GAS接続の事前あたため -->
-  <link rel="preconnect" href="https://script.google.com">
-  <link rel="dns-prefetch" href="//script.google.com">
-
-  <style>
-    :root { --gap: 12px; }
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; padding: 16px; line-height: 1.6; }
-    h1 { font-size: 28px; margin: 8px 0 16px; }
-    .row { margin-bottom: var(--gap); }
-    .muted { color: #666; }
-    .ok { color: #0a7b27; font-weight: 600; }
-    .err { color: #b00020; font-weight: 600; }
-    .code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: #f5f5f7; padding: 2px 6px; border-radius: 4px; }
-    .btn { padding: 10px 14px; border: 1px solid #ddd; border-radius: 8px; background: #fafafa; cursor: pointer; text-decoration:none; color:inherit; display:inline-block; }
-    .btn.primary { background: #1a73e8; border-color: #1a73e8; color: #fff; }
-    .btn.warn { background: #ffe9e9; border-color: #f3b4b4; color: #b00020; }
-    input[type="text"]{ width: 100%; padding: 10px; font-size: 16px; box-sizing: border-box; }
-    .grid { display: grid; gap: 10px; }
-    .actions { display: flex; gap: 10px; flex-wrap: wrap; }
-    .item { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; padding: 10px; border: 1px solid #eee; border-radius: 10px; }
-    .stock.badge { min-width: 64px; text-align: center; padding: 6px 8px; border-radius: 999px; border: 1px solid #ddd; background: #f7f7f9; font-weight: 700; }
-    .stock.badge.low { background: #fff8e1; border-color: #ffe082; }
-    .stock.badge.zero { background: #ffebee; border-color: #ffcdd2; color: #b00020; }
-    details summary { cursor: pointer; }
-    #result-empty { padding: 8px 0; }
-  </style>
-
-  <!-- 初期コード読込＆ショートカット起動リンク（即生成） -->
-  <script>
-    // ★ あなたの GAS /exec
-    window.GAS_ENDPOINT = 'https://script.google.com/macros/s/AKfycbw1dOKoAQbWdFKHHWHO6L4ayg7oVSsXUU0S9ZpJ643V9Jr_i1cXkaUP90zKk-h5NvY1/exec';
-    window.SHORTCUT_NAME = 'ScanToWeb';
-    window.DEBUG = false; // trueで生レスポンス表示
-
-    // ?code を先に拾う
-    (function(){
-      const p = new URLSearchParams(location.search);
-      window.__initialCode = p.get('code') || '';
-    })();
-
-    // iOSショートカット起動（GAS応答待ちなし）
-    document.addEventListener('DOMContentLoaded', () => {
-      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-      const btn = document.getElementById('iosScanBtn');
-      if (isIOS && btn) {
-        const base = location.origin + location.pathname;
-        const href = `shortcuts://run-shortcut?name=${encodeURIComponent(window.SHORTCUT_NAME)}&input=text&text=${encodeURIComponent(base)}`;
-        btn.style.display = '';
-        btn.addEventListener('click', ()=>{ location.href = href; });
-      }
-    });
-
-    // GASウォームアップ（非同期）
-    (function(){ try { new Image().src = window.GAS_ENDPOINT + '?mode=health&ts=' + Date.now(); } catch {} })();
-  </script>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>在庫管理（バーコード連携）</title>
+<style>
+  :root {
+    --bg:#0b0f14; --card:#121821; --muted:#88a0b6; --text:#e8f0fb; --accent:#52b788; --warn:#ef4444;
+  }
+  html,body{height:100%}
+  body{
+    margin:0; background:var(--bg); color:var(--text); font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .wrap{width:100%; max-width:720px; padding:24px;}
+  .card{
+    background:linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,.00));
+    border:1px solid rgba(255,255,255,.08);
+    border-radius:16px; padding:20px; box-shadow:0 8px 24px rgba(0,0,0,.25);
+  }
+  h1{margin:0 0 12px; font-size:20px; font-weight:700; letter-spacing:.02em}
+  .row{display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px}
+  input[type="text"]{
+    flex:1; min-width:180px; background:var(--card); color:var(--text);
+    border:1px solid rgba(255,255,255,.12); border-radius:12px; padding:12px 14px; outline:none;
+  }
+  button,.btn{
+    appearance:none; border:1px solid rgba(255,255,255,.14); background:var(--card); color:var(--text);
+    padding:12px 14px; border-radius:12px; cursor:pointer; font-weight:600;
+    transition:transform .05s ease, background .15s ease, border-color .15s ease;
+    text-decoration:none; display:inline-flex; align-items:center; gap:8px;
+  }
+  button:hover,.btn:hover{border-color:rgba(255,255,255,.25)}
+  button:active{transform:scale(.98)}
+  .primary{background:var(--accent); color:#07160f; border-color:transparent}
+  .danger{background:#172028; color:#f9dada; border-color:rgba(239,68,68,.35)}
+  .stock{
+    font-size:56px; font-weight:800; letter-spacing:.02em; margin:10px 0 4px; min-height:64px;
+  }
+  .name{color:var(--muted); min-height:1.2em}
+  .debug{
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    color:#b7c6d9; font-size:12px; background:#0e141c; border:1px dashed rgba(255,255,255,.12);
+    padding:10px; border-radius:12px; max-height:160px; overflow:auto; white-space:pre-wrap;
+  }
+  .pill{font-size:12px; padding:4px 8px; border-radius:999px; background:#0f1620; border:1px solid rgba(255,255,255,.12)}
+  .ghost{opacity:.7}
+</style>
 </head>
 <body>
-  <h1>病院在庫管理</h1>
+  <div class="wrap">
+    <div class="card">
+      <h1>在庫管理（バーコード連携）</h1>
 
-  <div class="row">
-    <label for="codeInput">バーコード（code）</label><br />
-    <input id="codeInput" type="text" inputmode="numeric" placeholder="例: 4901070303885"
-           autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
+      <!-- iOSショートカットは起動直後に即表示 -->
+      <div class="row" id="shortcutRow">
+        <a id="shortcutBtn" class="btn primary" href="#">📷 スキャン（ショートカット）</a>
+        <span class="pill">復帰先: <code id="returnBase"></code></span>
+      </div>
+
+      <div class="row">
+        <input id="codeInput" type="text" placeholder="code を入力（バーコード）" autocomplete="off" />
+        <button id="searchBtn">検索</button>
+      </div>
+
+      <div class="row">
+        <button id="decBtn" class="danger">-1</button>
+        <button id="incBtn" class="primary">+1</button>
+        <span class="pill ghost">表示は「確定＋未確定Δ」のみ</span>
+      </div>
+
+      <div class="name" id="nameLabel">コード未選択</div>
+      <div class="stock" id="stockLabel">—</div>
+
+      <div class="row" style="justify-content:space-between">
+        <span class="pill" id="statusPill">idle</span>
+        <span class="pill">更新: <span id="updatedAt">—</span></span>
+      </div>
+
+      <details style="margin-top:10px">
+        <summary>デバッグ</summary>
+        <div class="debug" id="debug"></div>
+      </details>
+    </div>
   </div>
 
-  <div class="row actions">
-    <button class="btn primary" id="searchBtn">検索</button>
-    <button class="btn" id="plusBtn">+1</button>
-    <button class="btn" id="minusBtn">-1</button>
-    <!-- iOSのみ：ショートカット起動 -->
-    <button class="btn" id="iosScanBtn" style="display:none">ショートカットでスキャン</button>
-  </div>
+<script>
+/** ====== 設定（差し替え） ====== */
+const GAS_ENDPOINT   = 'https://script.google.com/macros/s/AKfycbxkRBzIYw34QKncYMs5JblPXlWyYrplZ9RzuOJZH5SiKKV_tiSjt6GaTKubw76KqwKz/exec'; // ←差し替え
+const SHORTCUT_NAME  = 'ScanToWeb';                                                      // ←差し替え
+/** ============================== */
 
-  <div id="status" class="row muted"></div>
-  <div id="result" class="grid"></div>
+const RETURN_BASE_URL = location.origin + location.pathname;
 
-  <div class="row">
-    <details>
-      <summary>デバッグ（生レスポンス表示）</summary>
-      <pre id="debugRaw" class="code" style="white-space: pre-wrap;"></pre>
-    </details>
-  </div>
+/** ====== 状態 ====== */
+const state = {
+  code: null,
+  name: '',
+  confirmedStock: 0,
+  localDelta: 0,
+  lastUpdatedAt: null, // ISO string
+  pendingDelta: 0,     // 送信待ちの合算Δ
+  debounceTimer: null,
+  pollTimer: null,
+};
 
-  <!-- 本体ロジック（defer） -->
-  <script defer>
-    const qs = (sel, el=document) => el.querySelector(sel);
-    function showDebug(raw){ if(!window.DEBUG) return; const el=qs('#debugRaw'); try{ el.textContent = typeof raw==='string' ? raw : JSON.stringify(raw,null,2);}catch{ el.textContent=String(raw);} }
-    function setStatus(text, type='muted'){ const el=qs('#status'); el.textContent=text||''; el.className=`row ${type==='err'?'err':type==='ok'?'ok':'muted'}`; }
-    function refocus(){ const i=qs('#codeInput'); setTimeout(()=>{i.focus(); i.select();},0); }
+const UI = {
+  codeInput : document.getElementById('codeInput'),
+  searchBtn : document.getElementById('searchBtn'),
+  incBtn    : document.getElementById('incBtn'),
+  decBtn    : document.getElementById('decBtn'),
+  stock     : document.getElementById('stockLabel'),
+  name      : document.getElementById('nameLabel'),
+  status    : document.getElementById('statusPill'),
+  updatedAt : document.getElementById('updatedAt'),
+  debug     : document.getElementById('debug'),
+  shortcut  : document.getElementById('shortcutBtn'),
+  returnBase: document.getElementById('returnBase'),
+};
 
-    // ===== 表示ユーティリティ =====
-    function setBadgeStock(badgeEl, next) {
-      const v = Math.max(0, Number(next || 0));
-      badgeEl.dataset.stock = String(v);
-      badgeEl.textContent = String(v);
-      badgeEl.className = (v <= 0) ? 'stock badge zero'
-                      : (v <= 2) ? 'stock badge low'
-                                  : 'stock badge';
+/** ====== 初期表示（ショートカットボタンは即） ====== */
+(function initUI(){
+  UI.returnBase.textContent = RETURN_BASE_URL;
+  UI.shortcut.href = `shortcuts://run-shortcut?name=${encodeURIComponent(SHORTCUT_NAME)}&input=text&text=${encodeURIComponent(RETURN_BASE_URL)}`;
+})();
+
+/** ====== イベント ====== */
+UI.searchBtn.addEventListener('click', onSearch);
+UI.codeInput.addEventListener('keydown', (e)=>{ if(e.key==='Enter') onSearch(); });
+UI.incBtn.addEventListener('click', ()=>onAdjustClick(+1));
+UI.decBtn.addEventListener('click', ()=>onAdjustClick(-1));
+
+/** ====== 起動時：?code=XXX あれば自動検索 ====== */
+const params = new URLSearchParams(location.search);
+const initialCode = (params.get('code') || '').trim();
+if (initialCode) {
+  UI.codeInput.value = initialCode;
+  // 「検索中」プレースホルダを先に描画
+  setStatus('searching…');
+  UI.name.textContent = '検索中…';
+  UI.stock.textContent = '—';
+  searchByCode(initialCode);
+}
+
+/** ====== APIユーティリティ ====== */
+async function api(mode, query={}) {
+  const url = new URL(GAS_ENDPOINT);
+  url.searchParams.set('mode', mode);
+  Object.entries(query).forEach(([k,v])=> url.searchParams.set(k, String(v)));
+  log(`GET ${url}`);
+  const res = await fetch(url.toString(), { method:'GET', cache:'no-store' });
+  const json = await res.json();
+  if (!json.ok) throw new Error(json.error || 'api error');
+  return json.data;
+}
+
+/** ====== 検索 ====== */
+async function onSearch() {
+  const code = UI.codeInput.value.trim();
+  if (!code) return;
+  setStatus('searching…');
+  UI.name.textContent = '検索中…';
+  UI.stock.textContent = '—';
+  await searchByCode(code);
+}
+
+async function searchByCode(code) {
+  try {
+    const data = await api('search', { code });
+    if (!data) {
+      // 見つからない → 表示は0在庫相当で初期化（必要なら +1 で新規作成可）
+      state.code = code;
+      state.name = '';
+      state.confirmedStock = 0;
+      state.localDelta = 0;
+      state.lastUpdatedAt = new Date(0).toISOString();
+      updateDisplay();
+      setStatus('not found');
+      ensurePolling();
+      return;
     }
-    function stockBadgeClass(stock){
-      if (!isFinite(stock) || stock <= 0) return 'stock badge zero';
-      if (stock <= 2) return 'stock badge low';
-      return 'stock badge';
+    state.code = data.code;
+    state.name = data.name || '';
+    state.confirmedStock = parseInt(data.stock, 10) || 0;
+    state.localDelta = 0;
+    state.lastUpdatedAt = data.updated_at || new Date().toISOString();
+    updateDisplay();
+    setStatus('ready');
+    ensurePolling();
+  } catch (err) {
+    setStatus('error');
+    log('search error: ' + err);
+  }
+}
+
+/** ====== 楽観的更新（合算・200msデバウンス・下限0） ====== */
+function onAdjustClick(step) {
+  if (!state.code) return;
+
+  // 表示目標に対して下限0ガード
+  const currentTarget = state.confirmedStock + state.localDelta;
+  let nextTarget = currentTarget + step;
+  if (nextTarget < 0) nextTarget = 0;
+  const appliedDelta = nextTarget - currentTarget;
+
+  if (appliedDelta === 0) return;
+
+  // 楽観的：localDelta を更新 → 即表示は「確定＋未確定Δ」のみ
+  state.localDelta += appliedDelta;
+  state.pendingDelta += appliedDelta; // 送信合算
+  updateDisplay();
+
+  // デバウンス送信（同一code前提）
+  if (state.debounceTimer) clearTimeout(state.debounceTimer);
+  state.debounceTimer = setTimeout(flushAdjust, 200);
+}
+
+async function flushAdjust() {
+  const delta = state.pendingDelta;
+  state.pendingDelta = 0;
+  if (!delta) return;
+
+  setStatus('sending…');
+  try {
+    const beforeTarget = state.confirmedStock + state.localDelta; // 送信時点の目標
+    const updated = await api('adjust', { code: state.code, delta });
+    // サーバ確定値
+    const serverStock = parseInt(updated.stock, 10) || 0;
+    state.name = updated.name || state.name;
+    state.lastUpdatedAt = updated.updated_at || state.lastUpdatedAt;
+
+    // 目標に達したら localDelta を0にして確定
+    if (serverStock === beforeTarget) {
+      state.confirmedStock = serverStock;
+      state.localDelta = 0;
+    } else {
+      // 競合や下限0などで乖離 → サーバ値を確定にし、未達分があれば localDelta として残す
+      state.confirmedStock = serverStock;
+      const stillWant = Math.max(0, beforeTarget - serverStock);
+      state.localDelta = stillWant;
     }
 
-    // ===== 極値のみ表示のための状態 =====
-    const confirmedStock = new Map(); // code -> number（サーバ確定値）
-    const localDelta     = new Map(); // code -> number（未確定の合計Δ）
-    const displayTarget  = new Map(); // code -> number（UIに出す目標=confirmed+localDelta）
+    updateDisplay();
+    setStatus('ready');
+  } catch (err) {
+    // 送信失敗 → 楽観分を巻き戻す
+    state.pendingDelta = 0;
+    state.localDelta = 0;
+    setStatus('error');
+    log('adjust error: ' + err);
+    // サーバ差分で最終値を取り直す
+    try { await searchByCode(state.code); } catch(_) {}
+  }
+}
 
-    // ===== GASクライアント（検索はそのまま、更新はデバウンス合算） =====
-    function createGasClient(endpoint) {
-      let last = ''; const listeners = new Set(); let polling = false;
+/** ====== 差分ポーリング（changes?since=...） ====== */
+function ensurePolling() {
+  if (state.pollTimer) clearInterval(state.pollTimer);
+  state.pollTimer = setInterval(pollChanges, 2000);
+}
 
-      // デバウンス合算キュー：codeごとに「最後の入力からWAIT ms後」に1回だけ送る
-      const WAIT = 200; // 入力が止まってから送る遅延
-      const queue = new Map(); // code -> { total:number, timer:any, resolvers:Array }
+async function pollChanges() {
+  const since = state.lastUpdatedAt || new Date(0).toISOString();
+  try {
+    const list = await api('changes', { since });
+    if (!Array.isArray(list) || list.length === 0) return;
 
-      async function fetchJSON(url) {
-        const res = await fetch(url, { cache: 'no-store' });
-        const txt = await res.text(); showDebug(txt);
-        const j = JSON.parse(txt); if (j && j.ok === false) throw new Error(j.error||'error');
-        return j.list || [];
-      }
-      function subscribe(fn){ listeners.add(fn); return ()=>listeners.delete(fn); }
-      function notify(list){ listeners.forEach(fn => fn(list)); }
+    // 最新時刻を先に決定
+    let maxTs = Date.parse(since) || 0;
 
-      async function get(code){
-        return (await fetchJSON(`${endpoint}?mode=search&code=${encodeURIComponent(String(code))}`))[0] || null;
-      }
+    for (const item of list) {
+      const ts = Date.parse(item.updated_at || '') || 0;
+      if (ts > maxTs) maxTs = ts;
 
-      function adjust(code, delta){
-        const k = String(code);
-        let item = queue.get(k);
-        if (!item) { item = { total: 0, timer: null, resolvers: [] }; queue.set(k, item); }
-        item.total += delta;
+      if (!state.code || item.code !== state.code) continue;
 
-        const promise = new Promise((resolve, reject)=> item.resolvers.push({resolve, reject}));
+      const serverStock = parseInt(item.stock, 10) || 0;
 
-        // ← 重要：リセット可能なデバウンス（最後の入力から WAIT ms）
-        if (item.timer) clearTimeout(item.timer);
-        item.timer = setTimeout(async () => {
-          const total = item.total; const resolvers = item.resolvers.slice();
-          queue.delete(k);
-          try {
-            const rec = (await fetchJSON(`${endpoint}?mode=adjust&code=${encodeURIComponent(k)}&delta=${encodeURIComponent(total)}`))[0] || null;
-            if (rec && rec.updated_at) last = String(rec.updated_at);
-            if (rec) notify([rec]); // 最新確定を配布
-            resolvers.forEach(r => r.resolve(rec));
-          } catch (e) {
-            resolvers.forEach(r => r.reject(e));
-          }
-        }, WAIT);
-
-        return promise;
-      }
-
-      function startPolling(){
-        if (polling) return; polling = true;
-        (async function loop(){
-          while (polling){
-            try{
-              const diff = await fetchJSON(`${endpoint}?mode=changes&since=${encodeURIComponent(last)}`);
-              if (diff.length){
-                diff.sort((a,b)=>String(a.updated_at).localeCompare(String(b.updated_at)));
-                last = String(diff[diff.length-1].updated_at || last);
-                notify(diff);
-              }
-            }catch{}
-            await new Promise(r=>setTimeout(r, 1100));
-          }
-        })();
-      }
-      return { get, adjust, subscribe, startPolling };
-    }
-
-    const client = createGasClient(window.GAS_ENDPOINT);
-
-    // ===== 描画 =====
-    let currentCode = '';
-
-    function renderEmpty(code) {
-      const box = qs('#result');
-      box.innerHTML = `
-        <div id="result-empty" class="muted">該当データがありません。</div>
-        <div><button id="createBtn" class="btn">在庫0で新規作成</button></div>
-      `;
-      qs('#createBtn').onclick = async () => {
-        try {
-          await client.adjust(code, +1);
-          const rec = await client.adjust(code, -1);
-          if (rec) renderList([rec]);
-          setStatus('新規作成しました（在庫0）', 'ok');
-        } catch { setStatus('新規作成に失敗しました。', 'err'); }
-        finally { refocus(); }
-      };
-    }
-
-    function renderList(list){
-      const box = qs('#result'); box.innerHTML = '';
-      if (!list || list.length === 0){ renderEmpty(qs('#codeInput').value.trim()); return; }
-
-      const item = list[0];
-      const code = String(item.code ?? '');
-      const name = item.name ?? '';
-      const serverStock = Number(item.stock ?? 0);
-      currentCode = code;
-
-      // サーバ確定値を更新
-      confirmedStock.set(code, serverStock);
-
-      // UI目標（既存の localDelta を考慮）
-      const target = (displayTarget.has(code))
-        ? Math.max(0, Number(displayTarget.get(code)))  // 既存ターゲット尊重
-        : serverStock;
-
-      // localDelta を target と確定値の差で更新（負方向も許容）
-      localDelta.set(code, target - serverStock);
-      displayTarget.set(code, target);
-
-      const wrap = document.createElement('div');
-      wrap.className = 'item';
-
-      const showStock = target; // UIは常に「確定＋合計Δ」のみ
-      wrap.innerHTML = `
-        <div>
-          <div><strong>${name || '(名称未設定)'}</strong></div>
-          <div class="muted">code: <span class="code">${code}</span></div>
-        </div>
-        <div class="${stockBadgeClass(showStock)}" data-stock="${showStock}">${showStock}</div>
-        <div>
-          <button class="btn" data-delta="-1" data-code="${code}">-1</button>
-          <button class="btn" data-delta="+1" data-code="${code}">+1</button>
-        </div>
-      `;
-      box.appendChild(wrap);
-
-      const badgeEl = wrap.querySelector('.stock.badge, .stock.badge.low, .stock.badge.zero');
-      const minusBtn = wrap.querySelector('button[data-delta="-1"]');
-      if (showStock <= 0) { minusBtn.disabled = true; minusBtn.classList.add('warn'); }
-
-      // 在庫ボタン：確定値＋合計Δのみを一発表示（中間値は作らない）
-      box.onclick = async (ev) => {
-        const btn = ev.target.closest('button.btn'); if (!btn) return;
-        const code = btn.getAttribute('data-code');
-        const delta = parseFloat(btn.getAttribute('data-delta'));
-
-        const base = Number(confirmedStock.get(code) ?? 0);
-        const nextSum = (localDelta.get(code) || 0) + delta;
-        const nextTarget = Math.max(0, base + nextSum);
-        if (delta < 0 && nextTarget < 0) { setStatus('在庫はこれ以上減らせません（0未満禁止）', 'err'); return; }
-
-        // 楽観的表示：ターゲットを更新して一発表示
-        localDelta.set(code, nextSum);
-        displayTarget.set(code, nextTarget);
-        setBadgeStock(badgeEl, nextTarget);
-        setStatus(`在庫を ${delta>0?'+':''}${delta}（同期中）…`);
-
-        // マイナス活性/非活性
-        if (minusBtn) {
-          if (nextTarget <= 0) { minusBtn.disabled = true; minusBtn.classList.add('warn'); }
-          else { minusBtn.disabled = false; minusBtn.classList.remove('warn'); }
+      if (state.localDelta !== 0) {
+        // 未確定Δがある間は「目標到達のみ採用」
+        const target = state.confirmedStock + state.localDelta;
+        if (serverStock === target) {
+          state.confirmedStock = serverStock;
+          state.localDelta = 0;
+          updateDisplay();
+          setStatus('ready');
+        } else {
+          // 無視（極値未到達）
         }
-
-        try {
-          const rec = await client.adjust(code, delta); // デバウンス合算後に1回だけ送信
-          if (rec) {
-            const srv = Number(rec.stock || 0);
-            confirmedStock.set(code, srv);
-
-            // まだ未確定Δが残っているなら（更にボタンを叩いたなど）、UIは target を維持
-            const targetNow = Number(displayTarget.get(code) ?? srv);
-            localDelta.set(code, targetNow - srv);
-
-            // localDelta==0 になったらサーバ確定値で確定表示
-            const toShow = (localDelta.get(code) || 0) === 0 ? srv : targetNow;
-            setBadgeStock(badgeEl, toShow);
-            setStatus('在庫を更新しました。', 'ok');
-          }
-        } catch {
-          // 失敗時はターゲットを確定値に巻き戻し
-          const baseNow = Number(confirmedStock.get(code) ?? 0);
-          localDelta.set(code, 0); displayTarget.set(code, baseNow);
-          setBadgeStock(badgeEl, baseNow);
-          if (minusBtn) {
-            if (baseNow <= 0) { minusBtn.disabled = true; minusBtn.classList.add('warn'); }
-            else { minusBtn.disabled = false; minusBtn.classList.remove('warn'); }
-          }
-          setStatus('在庫更新に失敗しました。', 'err');
-        } finally { refocus(); }
-      };
+      } else {
+        // 未確定Δがない → サーバ確定値をそのまま採用
+        state.confirmedStock = serverStock;
+        updateDisplay();
+      }
     }
 
-    // ===== 起動処理 =====
-    (function init(){
-      const input = qs('#codeInput'); const btn = qs('#searchBtn');
+    state.lastUpdatedAt = new Date(maxTs).toISOString();
+  } catch (err) {
+    log('poll error: ' + err);
+  }
+}
 
-      // Enter/Tab で検索
-      input.addEventListener('keydown', (e)=>{ if (e.key === 'Enter' || e.key === 'Tab'){ e.preventDefault(); btn.click(); } });
+/** ====== 描画（中間値チラつき禁止ポリシー） ====== */
+function updateDisplay() {
+  const display = state.confirmedStock + state.localDelta;
+  UI.stock.textContent = String(display);
+  UI.name.textContent = state.code
+    ? (state.name ? `${state.name}（${state.code}）` : `code: ${state.code}`)
+    : 'コード未選択';
+  UI.updatedAt.textContent = state.lastUpdatedAt ? state.lastUpdatedAt.replace('T',' ').replace('Z','') : '—';
 
-      btn.addEventListener('click', async ()=>{
-        const code = input.value.trim();
-        if (!code){ setStatus('code が空です。バーコードを読み取ってください。', 'err'); return; }
+  // 在庫0未満は絶対に出さない（二重ガード）
+  if (display < 0) UI.stock.textContent = '0';
+}
 
-        // 即プレースホルダ（確定0＋Δ0）
-        qs('#result').innerHTML = `
-          <div class="item">
-            <div>
-              <div><strong>(検索中)</strong></div>
-              <div class="muted">code: <span class="code">${code}</span></div>
-            </div>
-            <div class="stock badge" data-stock="0">…</div>
-            <div></div>
-          </div>`;
-        setStatus('検索中…');
-
-        try {
-          const rec = await client.get(code);
-          if (rec) { renderList([rec]); setStatus('検索完了（1件）', 'ok'); client.startPolling(); }
-          else { renderEmpty(code); setStatus('該当なし', 'muted'); }
-        } catch { setStatus('検索に失敗しました。', 'err'); }
-        finally { refocus(); }
-      });
-
-      // 上部 +1/-1 も同じロジック（確定＋合計Δのみ）
-      qs('#plusBtn').addEventListener('click', async ()=>{
-        const code = input.value.trim();
-        if (!code){ setStatus('先に検索またはスキャンしてください。', 'err'); return; }
-        const badgeEl = qs('.stock.badge, .stock.badge.low, .stock.badge.zero');
-        const base = Number(confirmedStock.get(code) ?? 0);
-        const nextSum = (localDelta.get(code) || 0) + 1;
-        const nextTarget = Math.max(0, base + nextSum);
-
-        localDelta.set(code, nextSum);
-        displayTarget.set(code, nextTarget);
-        if (badgeEl) setBadgeStock(badgeEl, nextTarget);
-        setStatus('在庫を +1（同期中）…');
-
-        try {
-          const rec = await client.adjust(code, +1);
-          if (rec && badgeEl) {
-            const srv = Number(rec.stock || 0);
-            confirmedStock.set(code, srv);
-            const targetNow = Number(displayTarget.get(code) ?? srv);
-            localDelta.set(code, targetNow - srv);
-            setBadgeStock(badgeEl, (localDelta.get(code)||0)===0 ? srv : targetNow);
-            setStatus('在庫を +1 しました。', 'ok');
-          }
-        } catch {
-          localDelta.set(code, 0); displayTarget.set(code, base);
-          if (badgeEl) setBadgeStock(badgeEl, base);
-          setStatus('在庫更新に失敗しました。', 'err');
-        } finally { refocus(); }
-      });
-
-      qs('#minusBtn').addEventListener('click', async ()=>{
-        const code = input.value.trim();
-        if (!code){ setStatus('先に検索またはスキャンしてください。', 'err'); return; }
-        const badgeEl = qs('.stock.badge, .stock.badge.low, .stock.badge.zero');
-        const base = Number(confirmedStock.get(code) ?? 0);
-        const nextSum = (localDelta.get(code) || 0) - 1;
-        const nextTarget = Math.max(0, base + nextSum);
-        if (nextTarget < 0){ setStatus('在庫は 0 未満にできません。', 'err'); return; }
-
-        localDelta.set(code, nextSum);
-        displayTarget.set(code, nextTarget);
-        if (badgeEl) setBadgeStock(badgeEl, nextTarget);
-        setStatus('在庫を -1（同期中）…');
-
-        try {
-          const rec = await client.adjust(code, -1);
-          if (rec && badgeEl) {
-            const srv = Number(rec.stock || 0);
-            confirmedStock.set(code, srv);
-            const targetNow = Number(displayTarget.get(code) ?? srv);
-            localDelta.set(code, targetNow - srv);
-            setBadgeStock(badgeEl, (localDelta.get(code)||0)===0 ? srv : targetNow);
-            setStatus('在庫を -1 しました。', 'ok');
-          }
-        } catch {
-          localDelta.set(code, 0); displayTarget.set(code, base);
-          if (badgeEl) setBadgeStock(badgeEl, base);
-          setStatus('在庫更新に失敗しました。', 'err');
-        } finally { refocus(); }
-      });
-
-      // サーバ差分の受信：localDelta≠0 の間は極値到達以外は無視（中間値を出さない）
-      client.subscribe(list => {
-        if (!currentCode) return;
-        const rec = list.find(r => String(r.code) === String(currentCode));
-        if (!rec) return;
-
-        const code = String(rec.code);
-        const srv  = Number(rec.stock || 0);
-        const target = Number(displayTarget.get(code) ?? srv);
-        const ld = Number(localDelta.get(code) || 0);
-
-        if (ld !== 0) {
-          // 上昇中：srv が target に到達（または超過）したら採用、未満は破棄
-          if (ld > 0 && srv < target) return;
-          // 下降中：srv が target 以下に到達したら採用、超過は破棄
-          if (ld < 0 && srv > target) return;
-        }
-
-        confirmedStock.set(code, srv);
-        localDelta.set(code, 0);
-        displayTarget.set(code, srv);
-        renderList([rec]);
-      });
-
-      // ?code= で戻ってきたら即検索
-      const fromURL = window.__initialCode;
-      if (fromURL){ input.value = fromURL; btn.click(); } else { setTimeout(()=> input.focus(), 0); }
-    })();
-  </script>
+/** ====== ステータス＆ログ ====== */
+function setStatus(text){ UI.status.textContent = text; }
+function log(msg){
+  const t = new Date().toISOString();
+  UI.debug.textContent = `[${t}] ${msg}\n` + UI.debug.textContent;
+}
+</script>
 </body>
 </html>
+
 
 
 
