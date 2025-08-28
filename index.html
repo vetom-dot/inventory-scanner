@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>病院在庫管理（極値のみ表示・高速＆即時反映）</title>
 
-  <!-- GAS接続の事前あたため -->
   <link rel="preconnect" href="https://script.google.com">
   <link rel="dns-prefetch" href="//script.google.com">
 
@@ -33,22 +32,20 @@
     .meta { font-size: 13px; color: #444; }
     .meta code { background:#f3f6fb; border:1px solid #e3e8f0; padding:1px 4px; border-radius:4px; }
     .form-row { display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
+    .edit-panel { grid-column: 1 / -1; border:1px dashed #ddd; border-radius:10px; padding:10px; background:#fafafa; }
   </style>
 
-  <!-- 初期コード読込＆ショートカット起動リンク（即生成） -->
   <script>
     // ★ あなたの GAS /exec
-    window.GAS_ENDPOINT = 'https://script.google.com/macros/s/AKfycbzWjtTIoKKV_a30WnTPPJlvhqQ_ywXjtimSGI29R7pCPG8ZzUJ0sZjqN9hafFfD24Zx/exec'; // ←差し替え
+    window.GAS_ENDPOINT = 'https://script.google.com/macros/s/AKfycbw0EwBj7obbIaqRlLirAr4ejxGx_PVL_h_7sLMn9Bl3G96A7qOAtbWU_pMNrqv0n3o2/exec'; // ←差し替え
     window.SHORTCUT_NAME = 'ScanToWeb'; // ←差し替え
-    window.DEBUG = false; // trueで生レスポンス表示
+    window.DEBUG = false;
 
-    // ?code を先に拾う
     (function(){
       const p = new URLSearchParams(location.search);
       window.__initialCode = p.get('code') || '';
     })();
 
-    // iOSショートカット起動（GAS応答待ちなし）
     document.addEventListener('DOMContentLoaded', () => {
       const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
       const btn = document.getElementById('iosScanBtn');
@@ -60,7 +57,6 @@
       }
     });
 
-    // GASウォームアップ（非同期）
     (function(){ try { new Image().src = window.GAS_ENDPOINT + '?mode=health&ts=' + Date.now(); } catch {} })();
   </script>
 </head>
@@ -77,7 +73,6 @@
     <button class="btn primary" id="searchBtn">検索</button>
     <button class="btn" id="plusBtn">+1</button>
     <button class="btn" id="minusBtn">-1</button>
-    <!-- iOSのみ：ショートカット起動 -->
     <button class="btn" id="iosScanBtn" style="display:none">ショートカットでスキャン</button>
   </div>
 
@@ -91,14 +86,12 @@
     </details>
   </div>
 
-  <!-- 本体ロジック（defer） -->
   <script defer>
     const qs = (sel, el=document) => el.querySelector(sel);
     function showDebug(raw){ if(!window.DEBUG) return; const el=qs('#debugRaw'); try{ el.textContent = typeof raw==='string' ? raw : JSON.stringify(raw,null,2);}catch{ el.textContent=String(raw);} }
     function setStatus(text, type='muted'){ const el=qs('#status'); el.textContent=text||''; el.className=`row ${type==='err'?'err':type==='ok'?'ok':'muted'}`; }
     function refocus(){ const i=qs('#codeInput'); setTimeout(()=>{i.focus(); i.select();},0); }
 
-    // ===== 表示ユーティリティ =====
     function setBadgeStock(badgeEl, next) {
       const v = Math.max(0, Number(next || 0));
       badgeEl.dataset.stock = String(v);
@@ -113,18 +106,14 @@
       return 'stock badge';
     }
 
-    // ===== 極値のみ表示のための状態 =====
-    const confirmedStock = new Map(); // code -> number（サーバ確定値）
-    const localDelta     = new Map(); // code -> number（未確定の合計Δ）
-    const displayTarget  = new Map(); // code -> number（UIに出す目標=confirmed+localDelta）
+    const confirmedStock = new Map();
+    const localDelta     = new Map();
+    const displayTarget  = new Map();
 
-    // ===== GASクライアント（検索はそのまま、更新はデバウンス合算） =====
     function createGasClient(endpoint) {
       let last = ''; const listeners = new Set(); let polling = false;
-
-      // デバウンス合算キュー：codeごとに「最後の入力からWAIT ms後」に1回だけ送る
-      const WAIT = 200; // 入力が止まってから送る遅延
-      const queue = new Map(); // code -> { total:number, timer:any, resolvers:Array, meta?:{} }
+      const WAIT = 200;
+      const queue = new Map(); // code -> { total, timer, resolvers, meta }
 
       async function fetchJSON(url) {
         const res = await fetch(url, { cache: 'no-store' });
@@ -139,18 +128,15 @@
         return (await fetchJSON(`${endpoint}?mode=search&code=${encodeURIComponent(String(code))}`))[0] || null;
       }
 
-      // adjust: delta を合算。meta があれば最終リクエストに付与（新規作成やメタ更新用）
       function adjust(code, delta, meta={}) {
         const k = String(code);
         let item = queue.get(k);
         if (!item) { item = { total: 0, timer: null, resolvers: [], meta: {} }; queue.set(k, item); }
         item.total += delta;
-        // metaは上書き優先（直近の入力を使う）
         item.meta = { ...item.meta, ...meta };
 
         const promise = new Promise((resolve, reject)=> item.resolvers.push({resolve, reject}));
 
-        // ← 重要：リセット可能なデバウンス（最後の入力から WAIT ms）
         if (item.timer) clearTimeout(item.timer);
         item.timer = setTimeout(async () => {
           const total = item.total; const resolvers = item.resolvers.slice(); const metaFinal = item.meta || {};
@@ -162,11 +148,11 @@
             url.searchParams.set('delta', String(total));
             if (metaFinal.name != null)    url.searchParams.set('name', String(metaFinal.name));
             if (metaFinal.expires != null) url.searchParams.set('expires', String(metaFinal.expires));
-            if (metaFinal.price != null)   url.searchParams.set('price', String(metaFinal.price));
+            if (metaFinal.price  != null)  url.searchParams.set('price', String(metaFinal.price));
 
             const rec = (await fetchJSON(url.toString()))[0] || null;
             if (rec && rec.updated_at) last = String(rec.updated_at);
-            if (rec) notify([rec]); // 最新確定を配布
+            if (rec) notify([rec]);
             resolvers.forEach(r => r.resolve(rec));
           } catch (e) {
             resolvers.forEach(r => r.reject(e));
@@ -196,8 +182,6 @@
     }
 
     const client = createGasClient(window.GAS_ENDPOINT);
-
-    // ===== 描画 =====
     let currentCode = '';
 
     function renderEmpty(code) {
@@ -227,11 +211,10 @@
       qs('#createBtn').onclick = async () => {
         const meta = {
           name: qs('#newName').value.trim(),
-          expires: qs('#newExp').value,   // 空文字可
-          price: qs('#newPrice').value    // 空文字可
+          expires: qs('#newExp').value,
+          price: qs('#newPrice').value
         };
         try {
-          // delta=0 で作成＋メタ保存
           const rec = await client.adjust(code, 0, meta);
           if (rec) { renderList([rec]); setStatus('新規作成しました（在庫0）', 'ok'); }
           else { setStatus('新規作成に失敗しました。', 'err'); }
@@ -252,32 +235,49 @@
       const serverStock = Number(item.stock ?? 0);
       currentCode = code;
 
-      // サーバ確定値を更新
       confirmedStock.set(code, serverStock);
 
-      // UI目標（既存の localDelta を考慮）
       const target = (displayTarget.has(code))
         ? Math.max(0, Number(displayTarget.get(code)))
         : serverStock;
 
-      // localDelta を target と確定値の差で更新（負方向も許容）
       localDelta.set(code, target - serverStock);
       displayTarget.set(code, target);
 
       const wrap = document.createElement('div');
       wrap.className = 'item';
 
-      const showStock = target; // UIは常に「確定＋合計Δ」のみ
-      const metaHtml = `
-        <div class="meta">
-          <div>code: <span class="code">${code}</span></div>
-          <div>期限: <code>${expires || '-'}</code>　単価: <code>${isFinite(unitPrice)? unitPrice : '-'}</code></div>
-        </div>`;
-
+      const showStock = target;
       wrap.innerHTML = `
         <div>
-          <div><strong>${name || '(名称未設定)'}</strong></div>
-          ${metaHtml}
+          <div style="display:flex; align-items:center; gap:8px;">
+            <strong id="dispName">${name || '(名称未設定)'}</strong>
+            <button class="btn" id="editBtn" style="padding:4px 8px;">編集</button>
+          </div>
+          <div class="meta">
+            <div>code: <span class="code">${code}</span></div>
+            <div>期限: <code id="dispExp">${expires || '-'}</code>　単価: <code id="dispPrice">${isFinite(unitPrice)? unitPrice : '-'}</code></div>
+          </div>
+          <div class="edit-panel" id="editPanel" style="display:none; margin-top:8px;">
+            <div class="form-row">
+              <div>
+                <label>表示名</label>
+                <input id="editName" type="text" value="${name?.replace(/"/g,'&quot;') || ''}" />
+              </div>
+              <div>
+                <label>期限</label>
+                <input id="editExp" type="date" value="${expires || ''}" />
+              </div>
+            </div>
+            <div style="margin-top:8px;">
+              <label>単価</label>
+              <input id="editPrice" type="number" step="0.01" inputmode="decimal" value="${isFinite(unitPrice)? unitPrice : ''}" />
+            </div>
+            <div class="actions" style="margin-top:8px;">
+              <button class="btn primary" id="saveEdit">保存</button>
+              <button class="btn" id="cancelEdit">キャンセル</button>
+            </div>
+          </div>
         </div>
         <div class="${stockBadgeClass(showStock)}" data-stock="${showStock}">${showStock}</div>
         <div>
@@ -291,48 +291,78 @@
       const minusBtn = wrap.querySelector('button[data-delta="-1"]');
       if (showStock <= 0) { minusBtn.disabled = true; minusBtn.classList.add('warn'); }
 
-      // 在庫ボタン：確定値＋合計Δのみを一発表示（中間値は作らない）
+      // 編集UIのイベント
+      const editBtn   = wrap.querySelector('#editBtn');
+      const editPanel = wrap.querySelector('#editPanel');
+      const saveEdit  = wrap.querySelector('#saveEdit');
+      const cancelEdit= wrap.querySelector('#cancelEdit');
+      const dispName  = wrap.querySelector('#dispName');
+      const dispExp   = wrap.querySelector('#dispExp');
+      const dispPrice = wrap.querySelector('#dispPrice');
+
+      editBtn.onclick = () => { editPanel.style.display = editPanel.style.display === 'none' ? '' : 'none'; };
+      cancelEdit.onclick = () => { editPanel.style.display = 'none'; };
+
+      saveEdit.onclick = async () => {
+        const newName  = wrap.querySelector('#editName').value.trim();
+        const newExp   = wrap.querySelector('#editExp').value;
+        const newPrice = wrap.querySelector('#editPrice').value;
+
+        setStatus('メタ情報を保存中…');
+        try {
+          // delta=0 でメタ更新（debounce合算される点に注意）
+          const rec = await client.adjust(code, 0, { name:newName, expires:newExp, price:newPrice });
+          if (rec) {
+            dispName.textContent = rec.name || '(名称未設定)';
+            dispExp.textContent  = rec.expires_at || '-';
+            dispPrice.textContent= isFinite(Number(rec.unit_price)) ? Number(rec.unit_price) : '-';
+            editPanel.style.display = 'none';
+            setStatus('保存しました。', 'ok');
+          }
+        } catch {
+          setStatus('保存に失敗しました。', 'err');
+        } finally { refocus(); }
+      };
+
+      // 在庫±のイベント（既存ロジック）
       box.onclick = async (ev) => {
         const btn = ev.target.closest('button.btn'); if (!btn) return;
-        const code = btn.getAttribute('data-code');
-        const delta = parseFloat(btn.getAttribute('data-delta'));
+        if (btn.id === 'editBtn' || btn.id === 'saveEdit' || btn.id === 'cancelEdit') return; // 編集系は別処理
 
-        const base = Number(confirmedStock.get(code) ?? 0);
-        const nextSum = (localDelta.get(code) || 0) + delta;
+        const codeAttr = btn.getAttribute('data-code');
+        const deltaAttr = btn.getAttribute('data-delta');
+        if (!deltaAttr) return;
+
+        const delta = parseFloat(deltaAttr);
+        const base = Number(confirmedStock.get(codeAttr) ?? 0);
+        const nextSum = (localDelta.get(codeAttr) || 0) + delta;
         const nextTarget = Math.max(0, base + nextSum);
         if (delta < 0 && nextTarget < 0) { setStatus('在庫はこれ以上減らせません（0未満禁止）', 'err'); return; }
 
-        // 楽観的表示：ターゲットを更新して一発表示
-        localDelta.set(code, nextSum);
-        displayTarget.set(code, nextTarget);
+        localDelta.set(codeAttr, nextSum);
+        displayTarget.set(codeAttr, nextTarget);
         setBadgeStock(badgeEl, nextTarget);
         setStatus(`在庫を ${delta>0?'+':''}${delta}（同期中）…`);
 
-        // マイナス活性/非活性
         if (minusBtn) {
           if (nextTarget <= 0) { minusBtn.disabled = true; minusBtn.classList.add('warn'); }
           else { minusBtn.disabled = false; minusBtn.classList.remove('warn'); }
         }
 
         try {
-          const rec = await client.adjust(code, delta); // デバウンス合算後に1回だけ送信
+          const rec = await client.adjust(codeAttr, delta);
           if (rec) {
             const srv = Number(rec.stock || 0);
-            confirmedStock.set(code, srv);
-
-            // まだ未確定Δが残っているなら（更にボタンを叩いたなど）、UIは target を維持
-            const targetNow = Number(displayTarget.get(code) ?? srv);
-            localDelta.set(code, targetNow - srv);
-
-            // localDelta==0 になったらサーバ確定値で確定表示
-            const toShow = (localDelta.get(code) || 0) === 0 ? srv : targetNow;
+            confirmedStock.set(codeAttr, srv);
+            const targetNow = Number(displayTarget.get(codeAttr) ?? srv);
+            localDelta.set(codeAttr, targetNow - srv);
+            const toShow = (localDelta.get(codeAttr) || 0) === 0 ? srv : targetNow;
             setBadgeStock(badgeEl, toShow);
             setStatus('在庫を更新しました。', 'ok');
           }
         } catch {
-          // 失敗時はターゲットを確定値に巻き戻し
-          const baseNow = Number(confirmedStock.get(code) ?? 0);
-          localDelta.set(code, 0); displayTarget.set(code, baseNow);
+          const baseNow = Number(confirmedStock.get(codeAttr) ?? 0);
+          localDelta.set(codeAttr, 0); displayTarget.set(codeAttr, baseNow);
           setBadgeStock(badgeEl, baseNow);
           if (minusBtn) {
             if (baseNow <= 0) { minusBtn.disabled = true; minusBtn.classList.add('warn'); }
@@ -343,18 +373,15 @@
       };
     }
 
-    // ===== 起動処理 =====
     (function init(){
       const input = qs('#codeInput'); const btn = qs('#searchBtn');
 
-      // Enter/Tab で検索
       input.addEventListener('keydown', (e)=>{ if (e.key === 'Enter' || e.key === 'Tab'){ e.preventDefault(); btn.click(); } });
 
       btn.addEventListener('click', async ()=>{
         const code = input.value.trim();
         if (!code){ setStatus('code が空です。バーコードを読み取ってください。', 'err'); return; }
 
-        // 即プレースホルダ（確定0＋Δ0）
         qs('#result').innerHTML = `
           <div class="item">
             <div>
@@ -374,7 +401,6 @@
         finally { refocus(); }
       });
 
-      // 上部 +1/-1 も同じロジック（確定＋合計Δのみ）
       qs('#plusBtn').addEventListener('click', async ()=>{
         const code = input.value.trim();
         if (!code){ setStatus('先に検索またはスキャンしてください。', 'err'); return; }
@@ -436,7 +462,6 @@
         } finally { refocus(); }
       });
 
-      // サーバ差分の受信：localDelta≠0 の間は極値到達以外は無視（中間値を出さない）
       client.subscribe(list => {
         if (!currentCode) return;
         const rec = list.find(r => String(r.code) === String(currentCode));
@@ -448,8 +473,8 @@
         const ld = Number(localDelta.get(code) || 0);
 
         if (ld !== 0) {
-          if (ld > 0 && srv < target) return;   // 上昇中：未到達は破棄
-          if (ld < 0 && srv > target) return;   // 下降中：未到達は破棄
+          if (ld > 0 && srv < target) return;
+          if (ld < 0 && srv > target) return;
         }
 
         confirmedStock.set(code, srv);
@@ -458,17 +483,12 @@
         renderList([rec]);
       });
 
-      // ?code= で戻ってきたら即検索
       const fromURL = window.__initialCode;
       if (fromURL){ input.value = fromURL; btn.click(); } else { setTimeout(()=> input.focus(), 0); }
     })();
   </script>
 </body>
 </html>
-
-
-
-
 
 
 
