@@ -3,15 +3,15 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-<title>病院在庫管理</title>
+<title>病院在庫管理（ロット対応）</title>
 
 <link rel="preconnect" href="https://script.google.com">
 <link rel="dns-prefetch" href="//script.google.com">
 
 <style>
-  :root { --gap:12px; --radius:14px; --chip:#eef2f7; --text:#111; --muted:#6b7280; --primary:#1a73e8; }
+  :root { --gap:12px; --radius:14px; --chip:#eef2f7; --muted:#6b7280; --primary:#1a73e8; }
   * { box-sizing: border-box; }
-  body { margin:0; padding:16px; font-family: system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:var(--text); line-height:1.5; }
+  body { margin:0; padding:16px; font-family: system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:#111; line-height:1.5; }
   h1 { font-size:22px; margin:4px 0 14px; }
   .row { margin-bottom: var(--gap); }
   .muted { color: var(--muted); }
@@ -20,31 +20,16 @@
   .btn { display:inline-flex; align-items:center; justify-content:center; padding:10px 14px; border:1px solid #e5e7eb; border-radius:12px; background:#fff; font-size:15px; text-decoration:none; color:inherit; }
   .btn.primary { background: var(--primary); border-color: var(--primary); color:#fff; }
   .btn.ghost { background:#f8fafc; }
-  .btn.warn { background:#ffeaea; border-color:#ffc4c4; color:#b00020; }
-  input[type="text"], input[type="date"], input[type="number"] {
-    width:100%; padding:12px; font-size:16px; border:1px solid #e5e7eb; border-radius:12px; background:#fff;
-  }
+  input[type="text"], input[type="date"], input[type="number"] { width:100%; padding:12px; font-size:16px; border:1px solid #e5e7eb; border-radius:12px; background:#fff; }
   .actions { display:flex; gap:10px; flex-wrap:wrap; }
   .grid { display:grid; gap:12px; }
-  .card {
-    border:1px solid #e5e7eb; border-radius:16px; padding:14px;
-    box-shadow: 0 1px 0 rgba(16,24,40,.03);
-  }
+  .card { border:1px solid #e5e7eb; border-radius:16px; padding:14px; box-shadow:0 1px 0 rgba(16,24,40,.03); }
   .titleRow { display:flex; align-items:center; justify-content:space-between; gap:8px; }
   .name { font-size:18px; font-weight:700; word-break:break-word; }
   .chipRow { display:flex; flex-wrap:wrap; gap:8px; margin-top:6px; }
-  .chip {
-    display:inline-flex; align-items:center; padding:6px 8px; border-radius:999px;
-    background:var(--chip); border:1px solid #e5e7eb; font-size:13px; color:#374151;
-  }
-  .stockWrap {
-    display:grid; grid-template-columns: 1fr auto; align-items:center; gap:12px; margin-top:12px;
-  }
-  .stockBadge {
-    justify-self:center;
-    min-width:96px; text-align:center; padding:14px 18px; border-radius:999px;
-    border:1px solid #e5e7eb; background:#f8fafc; font-weight:800; font-size:28px;
-  }
+  .chip { display:inline-flex; align-items:center; padding:6px 8px; border-radius:999px; background:#eef2f7; border:1px solid #e5e7eb; font-size:13px; color:#374151; }
+  .stockWrap { display:grid; grid-template-columns: 1fr auto; align-items:center; gap:12px; margin-top:12px; }
+  .stockBadge { justify-self:center; min-width:96px; text-align:center; padding:14px 18px; border-radius:999px; border:1px solid #e5e7eb; background:#f8fafc; font-weight:800; font-size:28px; }
   .stockBadge.low  { background:#fff7e6; }
   .stockBadge.zero { background:#ffebee; color:#b00020; }
   .udCol { display:flex; flex-direction:column; gap:8px; }
@@ -54,21 +39,17 @@
   .small { font-size:12px; }
   details summary { cursor:pointer; }
   .code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .sectionTitle { font-size:14px; font-weight:700; margin:6px 0; }
 </style>
 
 <script>
-// === 設定（差し替え） ===
-window.GAS_ENDPOINT = 'https://script.google.com/macros/s/AKfycbx9RoOPcbTfIJL97_wdwta2gQJe5q5BGO3ozHm9x50q9eBQs2DLPLVvMBl9zM99ELZ9/exec';
-window.SHORTCUT_NAME = 'ScanToWeb';
+// 設定
+window.GAS_ENDPOINT = 'https://script.google.com/macros/s/REPLACE_WITH_YOUR_EXEC_ID/exec'; // ←差し替え
+window.SHORTCUT_NAME = 'ScanToWeb'; // ←差し替え
 window.DEBUG = false;
 
-// ?code を先読み
-(function(){
-  const p = new URLSearchParams(location.search);
-  window.__initialCode = p.get('code') || '';
-})();
+(function(){ const p=new URLSearchParams(location.search); window.__initialCode=p.get('code')||''; })();
 
-// iOSショートカットボタン
 document.addEventListener('DOMContentLoaded', () => {
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
   const btn = document.getElementById('iosScanBtn');
@@ -79,8 +60,6 @@ document.addEventListener('DOMContentLoaded', () => {
     btn.addEventListener('click', ()=>{ location.href = href; });
   }
 });
-
-// ウォームアップ
 (function(){ try { new Image().src = window.GAS_ENDPOINT + '?mode=health&ts=' + Date.now(); } catch {} })();
 </script>
 </head>
@@ -89,14 +68,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   <div class="row">
     <label for="codeInput" class="small muted">バーコード（code）</label>
-    <input id="codeInput" type="text" inputmode="numeric" placeholder="例: 4901070303885"
-      autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
+    <input id="codeInput" type="text" inputmode="numeric" placeholder="例: 4901070303885" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
   </div>
 
   <div class="row actions">
     <button class="btn primary" id="searchBtn">検索</button>
-    <button class="btn ghost"   id="plusBtn">+1</button>
-    <button class="btn ghost"   id="minusBtn">-1</button>
+    <button class="btn ghost"   id="plusBtn">+1（最短期限）</button>
+    <button class="btn ghost"   id="minusBtn">-1（最短期限）</button>
     <button class="btn" id="iosScanBtn" style="display:none">ショートカットでスキャン</button>
   </div>
 
@@ -111,82 +89,69 @@ document.addEventListener('DOMContentLoaded', () => {
   </div>
 
 <script defer>
-const qs = (s,el=document)=>el.querySelector(s);
+const qs=(s,el=document)=>el.querySelector(s);
 function showDebug(raw){ if(!window.DEBUG) return; const el=qs('#debugRaw'); try{ el.textContent=typeof raw==='string'?raw:JSON.stringify(raw,null,2);}catch{ el.textContent=String(raw);} }
-function setStatus(text,type='muted'){ const el=qs('#status'); el.textContent=text||''; el.className=`row ${type==='err'?'err':type==='ok'?'ok':'muted'}`; }
+function setStatus(t,type='muted'){ const el=qs('#status'); el.textContent=t||''; el.className=`row ${type==='err'?'err':type==='ok'?'ok':'muted'}`; }
 function refocus(){ const i=qs('#codeInput'); setTimeout(()=>{i.focus(); i.select();},0); }
+function fmtDateStr(s){ if(!s) return ''; const d=new Date(s); if(!isNaN(d)){ const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), da=String(d.getDate()).padStart(2,'0'); return `${y}-${m}-${da}`;} return s; }
+function badgeClass(v){ if(!isFinite(v)||v<=0) return 'stockBadge zero'; if(v<=2) return 'stockBadge low'; return 'stockBadge'; }
+function chip(html){ return `<span class="chip">${html}</span>`; }
+const keyOf = (code, exp)=> `${code}|${exp||''}`;
 
-// 表示ヘルパ
-function chip(text){ return `<span class="chip">${text}</span>`; }
-function fmtDateStr(s){
-  if(!s) return '';
-  // s が ISO/日付文字列なら YYYY-MM-DD に
-  const d = new Date(s);
-  if(!isNaN(d)) {
-    const y=d.getFullYear();
-    const m=String(d.getMonth()+1).padStart(2,'0');
-    const da=String(d.getDate()).padStart(2,'0');
-    return `${y}-${m}-${da}`;
-  }
-  return s; // そのまま表示
-}
-function badgeClass(v){
-  if(!isFinite(v) || v<=0) return 'stockBadge zero';
-  if(v<=2) return 'stockBadge low';
-  return 'stockBadge';
-}
+// 状態（ロット単位）
+const confirmedStock = new Map(); // key -> number
+const localDelta     = new Map(); // key -> number
+const displayTarget  = new Map(); // key -> number
 
-// 状態
-const confirmedStock = new Map(); // code -> number
-const localDelta     = new Map(); // code -> number
-const displayTarget  = new Map(); // code -> number
-
-// GAS クライアント（合算送信・差分購読）
+// GASクライアント（合算送信・差分購読）
 function createGasClient(endpoint){
   let last=''; const listeners=new Set(); let polling=false;
-  const WAIT=200; const queue=new Map(); // code -> {total,timer,resolvers,meta}
+  const WAIT=200; const queue=new Map(); // key -> {total,timer,resolvers,meta}
 
-  async function fetchJSON(url){
-    const res=await fetch(url,{cache:'no-store'}); const txt=await res.text(); showDebug(txt);
-    const j=JSON.parse(txt); if(j && j.ok===false) throw new Error(j.error||'error'); return j.list||[];
-  }
+  async function fetchJSON(url){ const res=await fetch(url,{cache:'no-store'}); const txt=await res.text(); showDebug(txt); const j=JSON.parse(txt); if(j && j.ok===false) throw new Error(j.error||'error'); return j.list||[]; }
   function subscribe(fn){ listeners.add(fn); return ()=>listeners.delete(fn); }
   function notify(list){ listeners.forEach(fn=>fn(list)); }
 
   async function get(code){
-    return (await fetchJSON(`${endpoint}?mode=search&code=${encodeURIComponent(String(code))}`))[0]||null;
+    // 複数ロットを配列で返す
+    return await fetchJSON(`${endpoint}?mode=search&code=${encodeURIComponent(String(code))}`);
   }
-  function adjust(code,delta,meta={}){
-    const k=String(code); let item=queue.get(k);
-    if(!item){ item={total:0,timer:null,resolvers:[],meta:{}}; queue.set(k,item); }
-    item.total+=delta; item.meta={...item.meta,...meta};
+
+  function adjust(code, delta, meta={}){
+    const k = keyOf(code, meta.expires || '');
+    let item = queue.get(k);
+    if (!item) { item={total:0,timer:null,resolvers:[],meta:{code}}; queue.set(k,item); }
+    item.total += delta;
+    item.meta = { ...item.meta, ...meta, code }; // codeは常に保持
+
     const p=new Promise((resolve,reject)=>item.resolvers.push({resolve,reject}));
-    if(item.timer) clearTimeout(item.timer);
+    if (item.timer) clearTimeout(item.timer);
     item.timer=setTimeout(async()=>{
-      const total=item.total; const resolvers=item.resolvers.slice(); const metaFinal=item.meta||{}; queue.delete(k);
+      const total=item.total, resolvers=item.resolvers.slice(), metaFinal=item.meta||{}; queue.delete(k);
       try{
         const url=new URL(`${endpoint}`);
         url.searchParams.set('mode','adjust');
-        url.searchParams.set('code',k);
-        url.searchParams.set('delta',String(total));
-        if(metaFinal.name!=null)    url.searchParams.set('name',String(metaFinal.name));
-        if(metaFinal.expires!=null) url.searchParams.set('expires',String(metaFinal.expires));
-        if(metaFinal.price!=null)   url.searchParams.set('price',String(metaFinal.price));
+        url.searchParams.set('code', String(metaFinal.code));
+        url.searchParams.set('delta', String(total));
+        if (metaFinal.name    != null) url.searchParams.set('name', String(metaFinal.name));
+        if (metaFinal.expires != null) url.searchParams.set('expires', String(metaFinal.expires));
+        if (metaFinal.price   != null) url.searchParams.set('price', String(metaFinal.price));
         const rec=(await fetchJSON(url.toString()))[0]||null;
-        if(rec && rec.updated_at) last=String(rec.updated_at);
-        if(rec) notify([rec]);
+        if (rec && rec.updated_at) last=String(rec.updated_at);
+        if (rec) notify([rec]);
         resolvers.forEach(r=>r.resolve(rec));
       }catch(e){ resolvers.forEach(r=>r.reject(e)); }
     },WAIT);
     return p;
   }
+
   function startPolling(){
-    if(polling) return; polling=true;
+    if (polling) return; polling=true;
     (async function loop(){
       while(polling){
         try{
           const diff=await fetchJSON(`${endpoint}?mode=changes&since=${encodeURIComponent(last)}`);
-          if(diff.length){
+          if (diff.length){
             diff.sort((a,b)=>String(a.updated_at).localeCompare(String(b.updated_at)));
             last=String(diff[diff.length-1].updated_at||last);
             notify(diff);
@@ -196,12 +161,15 @@ function createGasClient(endpoint){
       }
     })();
   }
-  return {get,adjust,subscribe,startPolling};
-}
-const client=createGasClient(window.GAS_ENDPOINT);
-let currentCode='';
 
-// 空表示（未登録）
+  return { get, adjust, subscribe, startPolling };
+}
+const client = createGasClient(window.GAS_ENDPOINT);
+
+// 描画
+let currentCode = '';
+let firstLotKey = ''; // 上部±の対象（最短期限）
+
 function renderEmpty(code){
   const box=qs('#result');
   box.innerHTML=`
@@ -227,8 +195,8 @@ function renderEmpty(code){
         </div>
       </div>
     </div>`;
-  qs('#createBtn').onclick=async()=>{
-    const meta={ name:qs('#newName').value.trim(), expires:qs('#newExp').value, price:qs('#newPrice').value };
+  qs('#createBtn').onclick = async ()=>{
+    const meta={ name:qs('#newName').value.trim(), expires:qs('#newExp').value, price:qs('#newPrice').value, code };
     try{
       const rec=await client.adjust(code,0,meta);
       if(rec){ renderList([rec]); setStatus('新規作成しました。','ok'); }
@@ -238,145 +206,216 @@ function renderEmpty(code){
   };
 }
 
-// 在庫カード
 function renderList(list){
   const box=qs('#result'); box.innerHTML='';
-  if(!list || list.length===0){ renderEmpty(qs('#codeInput').value.trim()); return; }
+  if (!list || list.length===0){ renderEmpty(qs('#codeInput').value.trim()); return; }
 
-  const item=list[0];
-  const code=String(item.code||'');
-  const name=item.name||'';
-  const exp =fmtDateStr(item.expires_at||'');
-  const price=isFinite(Number(item.unit_price))?Number(item.unit_price):'';
-  const srvStock=Number(item.stock||0);
-  currentCode=code;
+  currentCode = String(list[0].code||'');
+  // FEFO（期限昇順。空は最後）で整列済みを前提にしつつ、念のため並べ替え
+  list = list.slice().sort((a,b)=>{
+    const aKey = a.expires_at ? new Date(a.expires_at).toISOString() : '9999-12-31T23:59:59.999Z';
+    const bKey = b.expires_at ? new Date(b.expires_at).toISOString() : '9999-12-31T23:59:59.999Z';
+    return aKey.localeCompare(bKey);
+  });
 
-  confirmedStock.set(code,srvStock);
-  const target=displayTarget.has(code)?Math.max(0,Number(displayTarget.get(code))):srvStock;
-  localDelta.set(code,target-srvStock);
-  displayTarget.set(code,target);
-
-  const card=document.createElement('div'); card.className='card';
-  card.innerHTML=`
+  // 合計在庫（オプション表示）
+  const totalStock = list.reduce((acc, r)=> acc + Number(r.stock||0), 0);
+  const header = document.createElement('div');
+  header.className='card';
+  header.innerHTML = `
     <div class="titleRow">
-      <div class="name" id="dispName">${name || '(名称未設定)'}</div>
-      <button class="btn small" id="editBtn" style="padding:6px 10px; font-size:13px;">編集</button>
+      <div class="name">${list[0].name || '(名称未設定)'}</div>
+      <div class="muted small">合計在庫: <strong>${totalStock}</strong>（ロット別に操作）</div>
     </div>
-    <div class="chipRow">
-      ${chip(`<span class="muted small">code:</span> <span class="code">${code}</span>`)}
-      ${chip(`<span class="muted small">期限:</span> <span id="dispExp">${exp||'-'}</span>`)}
-      ${chip(`<span class="muted small">単価:</span> <span id="dispPrice">${price!==''?price:'-'}</span>`)}
-    </div>
-
-    <div class="stockWrap">
-      <div class="${badgeClass(target)}" id="stockBadge" data-stock="${target}">${target}</div>
-      <div class="udCol">
-        <button class="btn" data-delta="-1" data-code="${code}">-1</button>
-        <button class="btn" data-delta="+1" data-code="${code}">+1</button>
-      </div>
-    </div>
-
-    <div class="drawer" id="editDrawer" style="display:none;">
-      <div class="formRow">
-        <div>
-          <label class="small muted">表示名</label>
-          <input id="editName" type="text" value="${name.replace(/"/g,'&quot;')}" />
-        </div>
-        <div>
-          <label class="small muted">期限</label>
-          <input id="editExp" type="date" value="${exp || ''}" />
-        </div>
-      </div>
-      <div style="margin-top:10px;">
-        <label class="small muted">単価</label>
-        <input id="editPrice" type="number" step="0.01" inputmode="decimal" value="${price!==''?price:''}" />
-      </div>
-      <div class="actions" style="margin-top:12px;">
-        <button class="btn primary" id="saveEdit">保存</button>
-        <button class="btn" id="cancelEdit">キャンセル</button>
-      </div>
+    <div class="chipRow" style="margin-top:8px;">
+      ${chip(`<span class="muted small">code:</span> <span class="code">${currentCode}</span>`)}
+      <span class="chip" id="addLotBtn">＋ 別ロットを追加</span>
     </div>
   `;
-  box.appendChild(card);
+  box.appendChild(header);
 
-  const badgeEl=card.querySelector('#stockBadge');
-  const minusBtn=card.querySelector('button[data-delta="-1"]');
-  if(target<=0){ minusBtn.disabled=true; minusBtn.classList.add('warn'); }
+  // 別ロット追加フォーム（押すまで非表示）
+  const addLotBtn = header.querySelector('#addLotBtn');
+  addLotBtn.style.cursor='pointer';
+  addLotBtn.addEventListener('click', ()=>{
+    const form = document.createElement('div');
+    form.className='card';
+    form.innerHTML = `
+      <div class="sectionTitle">別ロットを追加</div>
+      <div class="drawer">
+        <div class="formRow">
+          <div>
+            <label class="small muted">表示名（任意・空なら既存名）</label>
+            <input id="lotName" type="text" placeholder="${list[0].name || '(名称未設定)'}" />
+          </div>
+          <div>
+            <label class="small muted">期限（必須推奨）</label>
+            <input id="lotExp" type="date" />
+          </div>
+        </div>
+        <div style="margin-top:10px;">
+          <label class="small muted">単価（任意）</label>
+          <input id="lotPrice" type="number" step="0.01" inputmode="decimal" placeholder="${isFinite(Number(list[0].unit_price))?Number(list[0].unit_price):''}" />
+        </div>
+        <div class="actions" style="margin-top:12px;">
+          <button id="lotCreate" class="btn primary">ロットを追加（在庫0）</button>
+        </div>
+      </div>`;
+    header.after(form);
 
-  // 編集ドロワー
-  const editBtn=card.querySelector('#editBtn');
-  const drawer=card.querySelector('#editDrawer');
-  const saveBtn=card.querySelector('#saveEdit');
-  const cancelBtn=card.querySelector('#cancelEdit');
-  const dispName=card.querySelector('#dispName');
-  const dispExp=card.querySelector('#dispExp');
-  const dispPrice=card.querySelector('#dispPrice');
+    qs('#lotCreate', form)?.addEventListener('click', async ()=>{
+      const meta={ code:currentCode, name:qs('#lotName', form).value.trim(), expires:qs('#lotExp', form).value, price:qs('#lotPrice', form).value };
+      if (!meta.expires) { setStatus('期限は可能なら入力してください（FEFOのため）','err'); }
+      try{
+        const rec=await client.adjust(currentCode,0,meta);
+        if(rec){ await doSearch(currentCode); setStatus('別ロットを追加しました。','ok'); }
+        else setStatus('追加に失敗しました。','err');
+      }catch{ setStatus('追加に失敗しました。','err'); }
+      finally{ refocus(); }
+    }, { once:true });
+  }, { once:true });
 
-  editBtn.onclick=()=>{ drawer.style.display = drawer.style.display==='none' ? '' : 'none'; };
-  cancelBtn.onclick=()=>{ drawer.style.display='none'; };
+  // ロットごとにカードを生成
+  list.forEach((it, idx)=>{
+    const code = String(it.code||'');
+    const exp  = it.expires_at || '';
+    const name = it.name || '';
+    const price= isFinite(Number(it.unit_price))?Number(it.unit_price):'';
+    const stock= Number(it.stock||0);
+    const key  = keyOf(code, exp);
 
-  saveBtn.onclick=async ()=>{
-    const newName = card.querySelector('#editName').value.trim();
-    const newExp  = card.querySelector('#editExp').value;
-    const newPrice= card.querySelector('#editPrice').value;
-    setStatus('保存中…');
-    try{
-      const rec=await client.adjust(code,0,{name:newName,expires:newExp,price:newPrice});
-      if(rec){
-        dispName.textContent = rec.name || '(名称未設定)';
-        dispExp.textContent  = fmtDateStr(rec.expires_at||'') || '-';
-        dispPrice.textContent= isFinite(Number(rec.unit_price))?Number(rec.unit_price):'-';
-        drawer.style.display='none';
-        setStatus('保存しました。','ok');
-      }
-    }catch{ setStatus('保存に失敗しました。','err'); }
-    finally{ refocus(); }
-  };
+    confirmedStock.set(key, stock);
+    const target = displayTarget.has(key) ? Math.max(0, Number(displayTarget.get(key))) : stock;
+    localDelta.set(key, target - stock);
+    displayTarget.set(key, target);
+    if (idx===0) firstLotKey = key; // 最短期限を上部±の対象に
 
-  // ± ボタン（極値のみ表示）
-  card.addEventListener('click', async (ev)=>{
-    const btn=ev.target.closest('button[data-delta]'); if(!btn) return;
-    const k=btn.getAttribute('data-code');
-    const d=parseFloat(btn.getAttribute('data-delta'));
-    const base=Number(confirmedStock.get(k)??0);
-    const nextSum=(localDelta.get(k)||0)+d;
-    const nextTarget=Math.max(0, base+nextSum);
-    if(d<0 && nextTarget<0){ setStatus('在庫は 0 未満にできません。','err'); return; }
+    const card=document.createElement('div'); card.className='card';
+    card.innerHTML = `
+      <div class="titleRow">
+        <div class="name">${name || '(名称未設定)'} <span class="muted small">(${idx===0?'最短期限':''})</span></div>
+        <button class="btn small" data-role="edit" style="padding:6px 10px; font-size:13px;">編集</button>
+      </div>
+      <div class="chipRow">
+        ${chip(`<span class="muted small">期限:</span> <span class="code" id="dispExp">${fmtDateStr(exp) || '-'}</span>`)}
+        ${chip(`<span class="muted small">単価:</span> <span class="code" id="dispPrice">${price!==''?price:'-'}</span>`)}
+      </div>
+      <div class="stockWrap">
+        <div class="${badgeClass(target)}" data-stock="${target}" id="badge">${target}</div>
+        <div class="udCol">
+          <button class="btn" data-delta="-1">-1</button>
+          <button class="btn" data-delta="+1">+1</button>
+        </div>
+      </div>
+      <div class="drawer" data-role="drawer" style="display:none;">
+        <div class="formRow">
+          <div>
+            <label class="small muted">表示名</label>
+            <input data-role="name" type="text" value="${name.replace(/"/g,'&quot;')}" />
+          </div>
+          <div>
+            <label class="small muted">期限</label>
+            <input data-role="exp" type="date" value="${fmtDateStr(exp) || ''}" />
+          </div>
+        </div>
+        <div style="margin-top:10px;">
+          <label class="small muted">単価</label>
+          <input data-role="price" type="number" step="0.01" inputmode="decimal" value="${price!==''?price:''}" />
+        </div>
+        <div class="actions" style="margin-top:12px;">
+          <button class="btn primary" data-role="save">保存</button>
+          <button class="btn" data-role="cancel">キャンセル</button>
+        </div>
+      </div>
+    `;
+    box.appendChild(card);
 
-    localDelta.set(k,nextSum);
-    displayTarget.set(k,nextTarget);
-    badgeEl.className = badgeClass(nextTarget);
-    badgeEl.textContent = String(nextTarget);
+    const badgeEl = qs('#badge', card);
+    const editBtn = qs('[data-role="edit"]', card);
+    const drawer  = qs('[data-role="drawer"]', card);
+    const saveBtn = qs('[data-role="save"]', card);
+    const cancelBtn = qs('[data-role="cancel"]', card);
+    const dispExp = qs('#dispExp', card);
+    const dispPrice = qs('#dispPrice', card);
 
-    setStatus(`在庫を ${d>0?'+':''}${d}（同期中）…`);
-    if(minusBtn){
-      if(nextTarget<=0){ minusBtn.disabled=true; minusBtn.classList.add('warn'); }
-      else { minusBtn.disabled=false; minusBtn.classList.remove('warn'); }
-    }
+    // 編集ドロワー
+    editBtn.onclick = ()=>{ drawer.style.display = drawer.style.display==='none' ? '' : 'none'; };
+    cancelBtn.onclick = ()=>{ drawer.style.display='none'; };
 
-    try{
-      const rec=await client.adjust(k,d);
-      if(rec){
-        const srv=Number(rec.stock||0);
-        confirmedStock.set(k,srv);
-        const targetNow=Number(displayTarget.get(k)??srv);
-        localDelta.set(k,targetNow-srv);
-        const toShow=(localDelta.get(k)||0)===0?srv:targetNow;
-        badgeEl.className=badgeClass(toShow);
-        badgeEl.textContent=String(toShow);
-        setStatus('在庫を更新しました。','ok');
-      }
-    }catch{
-      const baseNow=Number(confirmedStock.get(k)??0);
-      localDelta.set(k,0); displayTarget.set(k,baseNow);
-      badgeEl.className=badgeClass(baseNow); badgeEl.textContent=String(baseNow);
-      if(minusBtn){
-        if(baseNow<=0){ minusBtn.disabled=true; minusBtn.classList.add('warn'); }
-        else { minusBtn.disabled=false; minusBtn.classList.remove('warn'); }
-      }
-      setStatus('在庫更新に失敗しました。','err');
-    }finally{ refocus(); }
+    saveBtn.onclick = async ()=>{
+      const newName  = qs('[data-role="name"]', card).value.trim();
+      const newExp   = qs('[data-role="exp"]', card).value; // ここでロットの期限を変えることも可能
+      const newPrice = qs('[data-role="price"]', card).value;
+
+      setStatus('保存中…');
+      try{
+        // delta=0, expires=現在のor変更後の期限を渡す（サーバ側が該当ロットを更新 or 新規にする）
+        const rec = await client.adjust(code, 0, { name:newName, expires:newExp || exp, price:newPrice, code });
+        if (rec){
+          dispExp.textContent  = fmtDateStr(rec.expires_at||'') || '-';
+          dispPrice.textContent= isFinite(Number(rec.unit_price))?Number(rec.unit_price):'-';
+          drawer.style.display='none';
+          setStatus('保存しました。','ok');
+          // 期限が変わったら並び順が変わるため再検索
+          await doSearch(code);
+        }
+      }catch{ setStatus('保存に失敗しました。','err'); }
+      finally{ refocus(); }
+    };
+
+    // ±（このロットに対してのみ）
+    card.addEventListener('click', async (ev)=>{
+      const btn = ev.target.closest('button[data-delta]'); if (!btn) return;
+      const delta = parseFloat(btn.getAttribute('data-delta'));
+      const base  = Number(confirmedStock.get(key) ?? 0);
+      const nextSum = (localDelta.get(key) || 0) + delta;
+      const nextTarget = Math.max(0, base + nextSum);
+      if (delta<0 && nextTarget<0){ setStatus('在庫は 0 未満にできません。','err'); return; }
+
+      localDelta.set(key, nextSum);
+      displayTarget.set(key, nextTarget);
+      badgeEl.className = badgeClass(nextTarget);
+      badgeEl.textContent = String(nextTarget);
+      setStatus(`在庫を ${delta>0?'+':''}${delta}（同期中）…`);
+
+      try{
+        const rec = await client.adjust(code, delta, { expires: exp, code });
+        if (rec){
+          const srv = Number(rec.stock||0);
+          confirmedStock.set(key, srv);
+          const targetNow = Number(displayTarget.get(key) ?? srv);
+          localDelta.set(key, targetNow - srv);
+          const toShow = (localDelta.get(key)||0)===0 ? srv : targetNow;
+          badgeEl.className = badgeClass(toShow);
+          badgeEl.textContent = String(toShow);
+          setStatus('在庫を更新しました。','ok');
+        }
+      }catch{
+        const baseNow = Number(confirmedStock.get(key) ?? 0);
+        localDelta.set(key,0); displayTarget.set(key,baseNow);
+        badgeEl.className = badgeClass(baseNow);
+        badgeEl.textContent = String(baseNow);
+        setStatus('在庫更新に失敗しました。','err');
+      }finally{ refocus(); }
+    });
   });
+}
+
+async function doSearch(code){
+  qs('#result').innerHTML = `
+    <div class="card">
+      <div class="muted small">検索中…</div>
+      <div class="chipRow" style="margin-top:6px;">
+        ${chip(`<span class="muted small">code:</span> <span class="code">${code}</span>`)}
+      </div>
+    </div>`;
+  setStatus('検索中…');
+  try{
+    const list = await client.get(code);
+    if (list && list.length){ renderList(list); setStatus('検索完了','ok'); client.startPolling(); }
+    else { renderEmpty(code); setStatus('該当なし：新規作成できます','muted'); }
+  }catch{ setStatus('検索に失敗しました。','err'); }
+  finally{ refocus(); }
 }
 
 // 初期化
@@ -384,96 +423,94 @@ function renderList(list){
   const input=qs('#codeInput'); const btn=qs('#searchBtn');
 
   input.addEventListener('keydown',(e)=>{ if(e.key==='Enter'||e.key==='Tab'){ e.preventDefault(); btn.click(); } });
+  btn.addEventListener('click', ()=>{ const code=input.value.trim(); if(!code){ setStatus('code が空です。','err'); return; } doSearch(code); });
 
-  btn.addEventListener('click', async ()=>{
-    const code=input.value.trim();
-    if(!code){ setStatus('code が空です。バーコードを読み取ってください。','err'); return; }
-
-    qs('#result').innerHTML = `
-      <div class="card">
-        <div class="muted small">検索中…</div>
-        <div class="chipRow" style="margin-top:6px;">${chip(`<span class="muted small">code:</span> <span class="code">${code}</span>`)}</div>
-      </div>`;
-    setStatus('検索中…');
-
-    try{
-      const rec=await client.get(code);
-      if(rec){ renderList([rec]); setStatus('検索完了（1件）','ok'); client.startPolling(); }
-      else { renderEmpty(code); setStatus('該当なし：新規作成できます','muted'); }
-    }catch{ setStatus('検索に失敗しました。','err'); }
-    finally{ refocus(); }
-  });
-
-  // 上部 +1/-1（カード未表示時の押下にも対応）
+  // 上部±は「最短期限」のロットに適用
   qs('#plusBtn').addEventListener('click', async ()=>{
-    const code=input.value.trim(); if(!code){ setStatus('先に検索またはスキャンしてください。','err'); return; }
-    const badgeEl=qs('#stockBadge'); const base=Number(confirmedStock.get(code)??0);
-    const nextSum=(localDelta.get(code)||0)+1; const nextTarget=Math.max(0, base+nextSum);
-    localDelta.set(code,nextSum); displayTarget.set(code,nextTarget);
-    if(badgeEl){ badgeEl.className=badgeClass(nextTarget); badgeEl.textContent=String(nextTarget); }
-    setStatus('在庫を +1（同期中）…');
+    if (!firstLotKey){ setStatus('先に検索してください。','err'); return; }
+    const [code,exp] = firstLotKey.split('|');
+    const badgeEl = document.querySelector('.card .stockBadge'); // 先頭カードのバッジ
+    const base = Number(confirmedStock.get(firstLotKey) ?? 0);
+    const nextSum = (localDelta.get(firstLotKey) || 0) + 1;
+    const nextTarget = Math.max(0, base + nextSum);
+    localDelta.set(firstLotKey, nextSum); displayTarget.set(firstLotKey, nextTarget);
+    if (badgeEl){ badgeEl.className=badgeClass(nextTarget); badgeEl.textContent=String(nextTarget); }
+    setStatus('在庫を +1（最短期限）…');
     try{
-      const rec=await client.adjust(code,+1);
-      if(rec && badgeEl){
-        const srv=Number(rec.stock||0); confirmedStock.set(code,srv);
-        const targetNow=Number(displayTarget.get(code)??srv); localDelta.set(code,targetNow-srv);
-        const toShow=(localDelta.get(code)||0)===0?srv:targetNow;
-        badgeEl.className=badgeClass(toShow); badgeEl.textContent=String(toShow);
+      const rec = await client.adjust(code, +1, { expires: exp, code });
+      if (rec && badgeEl){
+        const srv = Number(rec.stock||0); confirmedStock.set(firstLotKey, srv);
+        const targetNow = Number(displayTarget.get(firstLotKey) ?? srv);
+        localDelta.set(firstLotKey, targetNow - srv);
+        const toShow = (localDelta.get(firstLotKey)||0)===0 ? srv : targetNow;
+        badgeEl.className = badgeClass(toShow); badgeEl.textContent = String(toShow);
         setStatus('在庫を +1 しました。','ok');
       }
     }catch{
-      localDelta.set(code,0); displayTarget.set(code,base);
-      if(badgeEl){ badgeEl.className=badgeClass(base); badgeEl.textContent=String(base); }
+      localDelta.set(firstLotKey, 0); displayTarget.set(firstLotKey, base);
+      if (badgeEl){ badgeEl.className=badgeClass(base); badgeEl.textContent=String(base); }
       setStatus('在庫更新に失敗しました。','err');
     }finally{ refocus(); }
   });
 
   qs('#minusBtn').addEventListener('click', async ()=>{
-    const code=input.value.trim(); if(!code){ setStatus('先に検索またはスキャンしてください。','err'); return; }
-    const badgeEl=qs('#stockBadge'); const base=Number(confirmedStock.get(code)??0);
-    const nextSum=(localDelta.get(code)||0)-1; const nextTarget=Math.max(0, base+nextSum);
-    if(nextTarget<0){ setStatus('在庫は 0 未満にできません。','err'); return; }
-    localDelta.set(code,nextSum); displayTarget.set(code,nextTarget);
-    if(badgeEl){ badgeEl.className=badgeClass(nextTarget); badgeEl.textContent=String(nextTarget); }
-    setStatus('在庫を -1（同期中）…');
+    if (!firstLotKey){ setStatus('先に検索してください。','err'); return; }
+    const [code,exp] = firstLotKey.split('|');
+    const badgeEl = document.querySelector('.card .stockBadge');
+    const base = Number(confirmedStock.get(firstLotKey) ?? 0);
+    const nextSum = (localDelta.get(firstLotKey) || 0) - 1;
+    const nextTarget = Math.max(0, base + nextSum);
+    if (nextTarget<0){ setStatus('在庫は 0 未満にできません。','err'); return; }
+    localDelta.set(firstLotKey, nextSum); displayTarget.set(firstLotKey, nextTarget);
+    if (badgeEl){ badgeEl.className=badgeClass(nextTarget); badgeEl.textContent=String(nextTarget); }
+    setStatus('在庫を -1（最短期限）…');
     try{
-      const rec=await client.adjust(code,-1);
-      if(rec && badgeEl){
-        const srv=Number(rec.stock||0); confirmedStock.set(code,srv);
-        const targetNow=Number(displayTarget.get(code)??srv); localDelta.set(code,targetNow-srv);
-        const toShow=(localDelta.get(code)||0)===0?srv:targetNow;
-        badgeEl.className=badgeClass(toShow); badgeEl.textContent=String(toShow);
+      const rec = await client.adjust(code, -1, { expires: exp, code });
+      if (rec && badgeEl){
+        const srv = Number(rec.stock||0); confirmedStock.set(firstLotKey, srv);
+        const targetNow = Number(displayTarget.get(firstLotKey) ?? srv);
+        localDelta.set(firstLotKey, targetNow - srv);
+        const toShow = (localDelta.get(firstLotKey)||0)===0 ? srv : targetNow;
+        badgeEl.className = badgeClass(toShow); badgeEl.textContent = String(toShow);
         setStatus('在庫を -1 しました。','ok');
       }
     }catch{
-      localDelta.set(code,0); displayTarget.set(code,base);
-      if(badgeEl){ badgeEl.className=badgeClass(base); badgeEl.textContent=String(base); }
+      localDelta.set(firstLotKey, 0); displayTarget.set(firstLotKey, base);
+      if (badgeEl){ badgeEl.className=badgeClass(base); badgeEl.textContent=String(base); }
       setStatus('在庫更新に失敗しました。','err');
     }finally{ refocus(); }
   });
 
+  // サーバ差分の受信（ロット単位で反映・極値到達のみ）
   client.subscribe(list=>{
-    if(!currentCode) return;
-    const rec=list.find(r=>String(r.code)===String(currentCode));
-    if(!rec) return;
-    const code=String(rec.code); const srv=Number(rec.stock||0);
-    const target=Number(displayTarget.get(code)??srv); const ld=Number(localDelta.get(code)||0);
-    if(ld!==0){
-      if(ld>0 && srv<target) return;
-      if(ld<0 && srv>target) return;
-    }
-    confirmedStock.set(code,srv);
-    localDelta.set(code,0); displayTarget.set(code,srv);
-    renderList([rec]);
+    if (!currentCode) return;
+    // 該当codeのみ
+    const related = list.filter(r => String(r.code) === String(currentCode));
+    if (!related.length) return;
+    // それぞれのロットキーで更新
+    let needRerender = false;
+    related.forEach(rec=>{
+      const key = keyOf(String(rec.code), String(rec.expires_at||''));
+      const srv = Number(rec.stock||0);
+      const target = Number(displayTarget.get(key) ?? srv);
+      const ld = Number(localDelta.get(key) || 0);
+      if (ld !== 0) {
+        if (ld > 0 && srv < target) return;
+        if (ld < 0 && srv > target) return;
+      }
+      confirmedStock.set(key, srv);
+      localDelta.set(key, 0); displayTarget.set(key, srv);
+      needRerender = true;
+    });
+    if (needRerender) doSearch(currentCode);
   });
 
-  const fromURL=window.__initialCode;
-  if(fromURL){ input.value=fromURL; btn.click(); } else { setTimeout(()=>input.focus(),0); }
+  const initial = window.__initialCode;
+  if (initial){ qs('#codeInput').value = initial; doSearch(initial); } else { setTimeout(()=>qs('#codeInput').focus(),0); }
 })();
 </script>
 </body>
 </html>
-
 
 
 
