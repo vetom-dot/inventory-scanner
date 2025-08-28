@@ -3,7 +3,12 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>病院在庫管理（iOSショートカット連携）</title>
+  <title>病院在庫管理（外部スキャン・高速版）</title>
+
+  <!-- ネットワークの先読み（TLS確立を前倒し） -->
+  <link rel="preconnect" href="https://script.google.com">
+  <link rel="dns-prefetch" href="//script.google.com">
+
   <style>
     :root { --gap: 12px; }
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; padding: 16px; line-height: 1.6; }
@@ -14,7 +19,6 @@
     .err { color: #b00020; font-weight: 600; }
     .code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: #f5f5f7; padding: 2px 6px; border-radius: 4px; }
     .btn { padding: 10px 14px; border: 1px solid #ddd; border-radius: 8px; background: #fafafa; cursor: pointer; text-decoration:none; color:inherit; display:inline-block; }
-    .btn:active { transform: translateY(1px); }
     .btn.primary { background: #1a73e8; border-color: #1a73e8; color: #fff; }
     .btn.warn { background: #ffe9e9; border-color: #f3b4b4; color: #b00020; }
     input[type="text"]{ width: 100%; padding: 10px; font-size: 16px; box-sizing: border-box; }
@@ -24,9 +28,36 @@
     .stock.badge { min-width: 64px; text-align: center; padding: 6px 8px; border-radius: 999px; border: 1px solid #ddd; background: #f7f7f9; font-weight: 700; }
     .stock.badge.low { background: #fff8e1; border-color: #ffe082; }
     .stock.badge.zero { background: #ffebee; border-color: #ffcdd2; color: #b00020; }
-    details summary { cursor: pointer; }
-    #result-empty { padding: 8px 0; }
+    .card { border:1px solid #eee; border-radius:10px; padding:12px; }
+    .apps { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
   </style>
+
+  <!-- ★ 先行スクリプト（UI即描画 & 戻りコード即反映） -->
+  <script>
+    // ===== 設定（あなたのGAS /exec）=====
+    window.GAS_ENDPOINT = 'https://script.google.com/macros/s/AKfycbzZ-R4mi7duu9Nhr2q4ZmXRS0JQ7tjW4xc6l37fzPDlW5RTPHdr07KObqjRaHQ733m3Og/exec';
+    window.DEBUG = false; // true にするとレスポンス生表示ON
+
+    // ===== Deep Link を即生成（GAS通信を待たない）=====
+    (function prepDeepLinks(){
+      const base = location.origin + location.pathname;       // 戻り先：このページ
+      const retTpl = `${base}?code={CODE}`;
+
+      // Android（ZXing系）とフォールバック
+      window.__SCAN_ANDROID = `zxing://scan/?ret=${encodeURIComponent(retTpl)}&SCAN_FORMATS=EAN_13,UPC_A,QR_CODE`;
+      window.__SCAN_ANDROID_FALLBACK = `http://zxing.appspot.com/scan?ret=${encodeURIComponent(retTpl)}&SCAN_FORMATS=EAN_13,UPC_A`;
+
+      // iOS: Pic2Shop / Qrafter
+      window.__SCAN_IOS_P2S = `pic2shop://scan?callback=${encodeURIComponent(base + '?code=EAN')}`;
+      window.__SCAN_IOS_QRF = `qrafter://x-callback-url/scan?x-success=${encodeURIComponent(base + '?code={CODE}')}&browser=external`;
+    })();
+
+    // ===== URL の ?code を最初から拾って表示用に保持 =====
+    (function readInitialCode(){
+      const p = new URLSearchParams(location.search);
+      window.__initialCode = p.get('code') || '';
+    })();
+  </script>
 </head>
 <body>
   <h1>病院在庫管理</h1>
@@ -41,8 +72,19 @@
     <button class="btn primary" id="searchBtn">検索</button>
     <button class="btn" id="plusBtn">+1</button>
     <button class="btn" id="minusBtn">-1</button>
-    <!-- iOSのみ表示：ショートカット起動 -->
-    <button class="btn" id="iosScanBtn" style="display:none">ショートカットでスキャン</button>
+  </div>
+
+  <!-- 外部スキャンアプリ（即時表示） -->
+  <div class="row card">
+    <strong>外部スキャンアプリで読み取る（スキャン後このページに戻ります）</strong>
+    <div class="apps">
+      <a id="btn-android" class="btn" href="#">Android: ZXing系</a>
+      <a id="btn-ios-p2s" class="btn" href="#">iOS: Pic2Shop</a>
+      <a id="btn-ios-qrf" class="btn" href="#">iOS: Qrafter</a>
+    </div>
+    <div class="muted" style="margin-top:6px">
+      ※未インストール時はストア誘導される場合があります
+    </div>
   </div>
 
   <div id="status" class="row muted"></div>
@@ -55,25 +97,25 @@
     </details>
   </div>
 
-  <script>
-    // ===== 設定 =====
-    // ★ デプロイ済み GAS /exec の URL（あなたのURL）
-    const GAS_ENDPOINT = 'https://script.google.com/macros/s/AKfycbzZ-R4mi7duu9Nhr2q4ZmXRS0JQ7tjW4xc6l37fzPDlW5RTPHdr07KObqjRaHQ733m3Og/exec';
-
-    // iOSショートカット名（あなたが作るショートカットの名前）
-    const SHORTCUT_NAME = 'ScanToWeb';
-    // Web→ショートカットへ渡す“戻り先URL”（ショートカットはここへ ?code=xxx を付けて戻す）
-    const RETURN_BASE_URL = location.origin + location.pathname;
-
-    // ===== ユーティリティ =====
+  <!-- ★ メイン処理は defer で後追い（初期描画を阻害しない） -->
+  <script defer>
+    // ===== 小ユーティリティ =====
     const qs = (sel, el=document) => el.querySelector(sel);
-    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
-    function getQueryParam(name){ const p=new URLSearchParams(location.search); return p.get(name)||''; }
-    function showDebug(raw){ const el=qs('#debugRaw'); try{ el.textContent = typeof raw==='string' ? raw : JSON.stringify(raw,null,2);}catch{ el.textContent=String(raw);} }
     function setStatus(text, type='muted'){ const el=qs('#status'); el.textContent=text||''; el.className=`row ${type==='err'?'err':type==='ok'?'ok':'muted'}`; }
+    function showDebug(raw){ if(!window.DEBUG) return; const el=qs('#debugRaw'); try{ el.textContent = typeof raw==='string' ? raw : JSON.stringify(raw,null,2);}catch{ el.textContent=String(raw);} }
     function refocus(){ const i=qs('#codeInput'); setTimeout(()=>{i.focus(); i.select();},0); }
 
-    // ===== レンダリング =====
+    // ===== UI だけ先に整える =====
+    (function wireScanButtons(){
+      const a = document.getElementById('btn-android');
+      a.href = window.__SCAN_ANDROID;
+      a.addEventListener('click', () => { setTimeout(()=>{ a.href = window.__SCAN_ANDROID_FALLBACK; }, 120); });
+
+      document.getElementById('btn-ios-p2s').href = window.__SCAN_IOS_P2S;
+      document.getElementById('btn-ios-qrf').href = window.__SCAN_IOS_QRF;
+    })();
+
+    // ===== 画面レンダリング =====
     let currentCode = '';
 
     function stockBadgeClass(stock){
@@ -84,7 +126,7 @@
     function renderEmpty(code) {
       const box = qs('#result');
       box.innerHTML = `
-        <div id="result-empty" class="muted">該当データがありません。</div>
+        <div class="muted">該当データがありません。</div>
         <div><button id="createBtn" class="btn">在庫0で新規作成</button></div>
       `;
       qs('#createBtn').onclick = async () => {
@@ -92,25 +134,18 @@
           await client.adjust(code, +1);
           await client.adjust(code, -1);
           const rec = await client.get(code);
-          renderList(rec ? [rec] : []);
+          if (rec) renderList([rec]);
           setStatus('新規作成しました（在庫0）', 'ok');
         } catch { setStatus('新規作成に失敗しました。', 'err'); }
         finally { refocus(); }
       };
     }
     function renderList(list){
-      const box = qs('#result');
-      box.innerHTML = '';
-      if (!list || list.length === 0){
-        renderEmpty(qs('#codeInput').value.trim());
-        return;
-      }
+      const box = qs('#result'); box.innerHTML = '';
+      if (!list || list.length === 0){ renderEmpty(qs('#codeInput').value.trim()); return; }
       const item = list[0];
-      const code = item.code ?? '';
-      const name = item.name ?? '';
-      const stock = Number(item.stock ?? 0);
+      const code = item.code ?? ''; const name = item.name ?? ''; const stock = Number(item.stock ?? 0);
       currentCode = String(code);
-
       const wrap = document.createElement('div');
       wrap.className = 'item';
       wrap.innerHTML = `
@@ -133,29 +168,25 @@
         const btn = ev.target.closest('button.btn'); if (!btn) return;
         const code = btn.getAttribute('data-code');
         const delta = parseFloat(btn.getAttribute('data-delta'));
-
         const stockEl = btn.closest('.item').querySelector('.stock.badge, .stock.badge.low, .stock.badge.zero');
         const current = Number(stockEl?.dataset.stock ?? 0);
         if (delta < 0 && current <= 0) { setStatus('在庫はこれ以上減らせません（0未満禁止）', 'err'); return; }
-
         try{
           setStatus(`在庫を ${delta>0?'+':''}${delta} します…`);
           await client.adjust(code, delta);
           const rec = await client.get(code);
-          renderList(rec ? [rec] : []);
+          if (rec) renderList([rec]);
           setStatus('在庫を更新しました。', 'ok');
-        }catch{
-          setStatus('在庫更新時にエラーが発生しました。', 'err');
-        }finally{ refocus(); }
+        }catch{ setStatus('在庫更新時にエラーが発生しました。', 'err'); }
+        finally{ refocus(); }
       };
     }
 
-    // ===== GAS クライアント（アダプティブ・ポーリング＋コアレッサ）=====
-    function createGasClient({ endpoint, activeMs = 1000, idleMs = 5000 }) {
-      const map = new Map();   let last = '';  const listeners = new Set();
-      const queue = new Map(); let flushTimer = null;
-      let running = false; let backoff = 0; let nextTick = idleMs;
-      const visible = () => !document.hidden;
+    // ===== GAS クライアント（初期は“何もしない”→初回アクション後に稼働）=====
+    function createGasClient({ endpoint }) {
+      const listeners = new Set();
+      let last = '';
+      let polling = false;
 
       async function fetchJSON(url) {
         const txt = await (await fetch(url, { cache: 'no-store' })).text();
@@ -164,177 +195,95 @@
         if (j && j.ok === false) throw new Error(j.error || 'error');
         return j.list || [];
       }
-      function snapshot(){ return Array.from(map.values()); }
-      function notify(){ listeners.forEach(fn => fn(snapshot())); }
-      function subscribe(fn){ listeners.add(fn); return ()=>listeners.delete(fn); }
 
-      async function init(){
-        const list = await fetchJSON(`${endpoint}?mode=list`);
-        for (const r of list) {
-          map.set(String(r.code), r);
-          if (r.updated_at && r.updated_at > last) last = r.updated_at;
-        }
-        startLoop();
-        return snapshot();
-      }
-      function scheduleSoon(ms = 0){ nextTick = Math.min(nextTick, ms); }
-      async function pollOnce(){
-        const qs = last ? `?mode=changes&since=${encodeURIComponent(last)}` : `?mode=list`;
-        const diff = await fetchJSON(`${endpoint}${qs}`);
-        let changed = false;
-        for (const r of diff) {
-          map.set(String(r.code), r);
-          if (r.updated_at && r.updated_at > last) last = r.updated_at;
-          changed = true;
-        }
-        if (changed) notify();
-        return changed;
-      }
-      async function loop(){
-        running = true;
-        while (running){
-          try{
-            if (visible()) {
-              const changed = await pollOnce();
-              nextTick = changed ? activeMs : (visible() ? activeMs : idleMs);
-              backoff = 0;
-            } else {
-              await pollOnce();
-              nextTick = idleMs;
-            }
-          } catch {
-            backoff = Math.min(backoff ? backoff * 2 : 1000, 20000);
-            nextTick = backoff;
-          }
-          await new Promise(r => setTimeout(r, nextTick));
-        }
-      }
-      function startLoop(){ if (!running){ nextTick = activeMs; loop(); } }
-      function stopLoop(){ running = false; }
+      function subscribe(fn){ listeners.add(fn); return ()=>listeners.delete(fn); }
+      function notify(snapshot){ listeners.forEach(fn => fn(snapshot)); }
 
       async function get(code){
-        const k = String(code);
-        if (map.has(k)) return map.get(k);
-        const list = await fetchJSON(`${endpoint}?mode=search&code=${encodeURIComponent(k)}`);
+        const list = await fetchJSON(`${endpoint}?mode=search&code=${encodeURIComponent(String(code))}`);
         const rec = list[0] || null;
-        if (rec){
-          map.set(k, rec);
-          if (rec.updated_at && rec.updated_at > last) last = rec.updated_at;
-          notify();
-        }
+        if (rec && rec.updated_at && rec.updated_at > last) last = rec.updated_at;
         return rec;
       }
-      function adjust(code, delta){
-        const k = String(code);
-        const prev = map.get(k);
-        const optimistic = { ...(prev||{code:k, name:'', stock:0}), stock: Math.max(0, Number(prev?.stock||0) + delta) };
-        map.set(k, optimistic); notify();
-        queue.set(k, (queue.get(k) || 0) + delta);
-        if (!flushTimer) flushTimer = setTimeout(flushQueue, 150);
+      async function adjust(code, delta){
+        const list = await fetchJSON(`${endpoint}?mode=adjust&code=${encodeURIComponent(String(code))}&delta=${encodeURIComponent(delta)}`);
+        const rec = list[0] || null;
+        if (rec && rec.updated_at && rec.updated_at > last) last = rec.updated_at;
+        // 最初の操作でポーリングを開始
+        startPollingSoon();
+        notify(rec ? [rec] : []);
+        return rec;
       }
-      async function flushQueue(){
-        const entries = Array.from(queue.entries());
-        queue.clear(); flushTimer = null;
-        for (const [k, total] of entries) {
-          try{
-            const list = await fetchJSON(`${endpoint}?mode=adjust&code=${encodeURIComponent(k)}&delta=${encodeURIComponent(total)}`);
-            const real = list[0];
-            if (real){
-              map.set(k, real);
-              if (real.updated_at && real.updated_at > last) last = real.updated_at;
-              notify();
-            }
-            scheduleSoon(0);
-          }catch{}
-        }
+
+      function startPollingSoon(){
+        if (polling) return;
+        polling = true;
+        (async function loop(){
+          while(polling){
+            try{
+              const diff = await fetchJSON(`${endpoint}?mode=changes&since=${encodeURIComponent(last)}`);
+              if (diff.length){
+                diff.sort((a,b)=>String(a.updated_at).localeCompare(String(b.updated_at)));
+                last = String(diff[diff.length-1].updated_at || last);
+                notify(diff);
+              }
+            }catch{}
+            await new Promise(r=>setTimeout(r, 1500)); // 軽め
+          }
+        })();
       }
-      window.addEventListener('online',  () => scheduleSoon(0));
-      document.addEventListener('visibilitychange', () => scheduleSoon(visible() ? 0 : idleMs));
-      return { init, get, adjust, subscribe, snapshot, stopLoop };
+
+      return { get, adjust, subscribe, startPollingSoon };
     }
 
-    const client = createGasClient({ endpoint: GAS_ENDPOINT, activeMs: 1000, idleMs: 5000 });
+    const client = createGasClient({ endpoint: window.GAS_ENDPOINT });
 
-    // ===== iOSショートカット起動 =====
-    function buildShortcutURL(){
-      // name=ショートカット名, input=text, text=戻り先URL（ショートカット側で ?code= を付けて戻す）
-      const name = encodeURIComponent(SHORTCUT_NAME);
-      const text = encodeURIComponent(RETURN_BASE_URL);
-      return `shortcuts://run-shortcut?name=${name}&input=text&text=${text}`;
-    }
-    function initShortcutButton(){
-      const btn = qs('#iosScanBtn'); if (!btn) return;
-      if (isIOS) {
-        btn.style.display='';
-        btn.addEventListener('click', ()=>{
-          location.href = buildShortcutURL();
-        });
-      }
-    }
-
-    // ===== 起動処理 =====
+    // ===== 起動：UIイベントを先に、通信は後から =====
     (async function init(){
-      if (!GAS_ENDPOINT){ setStatus('GAS の URL（GAS_ENDPOINT）が未設定です。', 'err'); return; }
-
-      try { await client.init(); } catch { setStatus('初期データの取得に失敗しました。', 'err'); }
-
       const input = qs('#codeInput');
       const btn = qs('#searchBtn');
 
-      // Enter/Tab で検索（HIDスキャナ対策にもなる）
+      // Enter/Tab で検索（HIDスキャナもOK）
       input.addEventListener('keydown', (e)=>{ if (e.key === 'Enter' || e.key === 'Tab'){ e.preventDefault(); btn.click(); } });
 
+      // 検索ボタン
       btn.addEventListener('click', async ()=>{
         const code = input.value.trim();
         if (!code){ setStatus('code が空です。バーコードを読み取ってください。', 'err'); return; }
-        const rec = await client.get(code);
-        renderList(rec ? [rec] : []);
-        setStatus(rec ? '検索完了（1件）' : '該当なし', rec ? 'ok' : 'muted');
-        refocus();
+        // プレースホルダを即描画（体感を速く）
+        qs('#result').innerHTML = `
+          <div class="item">
+            <div>
+              <div><strong>(検索中)</strong></div>
+              <div class="muted">code: <span class="code">${code}</span></div>
+            </div>
+            <div class="stock badge" data-stock="0">…</div>
+            <div></div>
+          </div>`;
+        setStatus('検索中…');
+        try{
+          const rec = await client.get(code);
+          if (rec) { renderList([rec]); setStatus('検索完了（1件）', 'ok'); client.startPollingSoon(); }
+          else { renderEmpty(code); setStatus('該当なし', 'muted'); }
+        }catch{ setStatus('検索に失敗しました。', 'err'); }
+        finally{ refocus(); }
       });
 
-      qs('#plusBtn').addEventListener('click', async ()=>{
-        const code = input.value.trim();
-        if (!code){ setStatus('先に検索またはスキャンしてください。', 'err'); return; }
-        await client.adjust(code, +1);
-        const rec = await client.get(code);
-        renderList(rec ? [rec] : []);
-        setStatus('在庫を +1 しました。', 'ok');
-      });
-      qs('#minusBtn').addEventListener('click', async ()=>{
-        const code = input.value.trim();
-        if (!code){ setStatus('先に検索またはスキャンしてください。', 'err'); return; }
-        const shown = Number(qs('.stock.badge, .stock.badge.low, .stock.badge.zero')?.dataset.stock ?? 0);
-        if (shown <= 0){ setStatus('在庫は 0 未満にできません。', 'err'); return; }
-        await client.adjust(code, -1);
-        const rec = await client.get(code);
-        renderList(rec ? [rec] : []);
-        setStatus('在庫を -1 しました。', 'ok');
-      });
-
-      client.subscribe(list => {
+      // 差分で表示中アイテムが動いたら更新
+      client.subscribe(diff => {
         if (!currentCode) return;
-        const rec = list.find(r => String(r.code) === String(currentCode));
-        if (rec) {
-          const badge = qs('.stock.badge, .stock.badge.low, .stock.badge.zero');
-          if (!badge || Number(badge.dataset.stock) !== Number(rec.stock)) {
-            renderList([rec]);
-            setStatus('最新データに同期しました。');
-          }
-        }
+        const rec = diff.find(r => String(r.code) === String(currentCode));
+        if (rec) renderList([rec]);
       });
 
-      // iOSショートカットボタン
-      initShortcutButton();
-
-      // URL ?code=XXXX で自動検索
-      setTimeout(()=> input.focus(), 0);
-      const fromURL = getQueryParam('code');
-      if (fromURL){
-        input.value = fromURL;
-        const rec = await client.get(fromURL);
-        renderList(rec ? [rec] : []);
-        setStatus(rec ? '検索完了（1件）' : '該当なし', rec ? 'ok' : 'muted');
+      // 戻り時（?code=…）は即プレースホルダ→検索
+      if (window.__initialCode){
+        const code = window.__initialCode;
+        input.value = code;
+        btn.click(); // 即検索（プレースホルダ → 非同期検索）
+      } else {
+        // 初回は入力にフォーカスだけ
+        setTimeout(()=> input.focus(), 0);
       }
     })();
   </script>
