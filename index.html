@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>病院在庫管理（iOSショートカット・高速版）</title>
+  <title>病院在庫管理（iOSショートカット・高速＆即時反映）</title>
 
-  <!-- GAS接続を前倒しで温める -->
+  <!-- GAS接続の事前あたため -->
   <link rel="preconnect" href="https://script.google.com">
   <link rel="dns-prefetch" href="//script.google.com">
 
@@ -32,35 +32,33 @@
     #result-empty { padding: 8px 0; }
   </style>
 
-  <!-- クリティカル：ショートカットリンク生成 & コード即時反映（本体JSを待たない） -->
+  <!-- クリティカル：初期コード読込＆ショートカットリンク即生成 -->
   <script>
     // ★ あなたの GAS /exec
-    window.GAS_ENDPOINT = 'https://script.google.com/macros/s/AKfycbxthRkGbj9auHpmxhS3VTynScvsUlZyvIY0S_ipgAMZOrGA_sWf4chlvI530xpSTJrk/exec';
+    window.GAS_ENDPOINT = 'https://script.google.com/macros/s/AKfycbytjlc8ptTKYyskhIs_p3IZOlLAhIAyeVg23z7Z26ja0xOznMkxHlyyLv59U09mQjsd/exec';
     window.SHORTCUT_NAME = 'ScanToWeb';
+    window.DEBUG = false; // trueで生レスポンス表示
 
-    // URLの?codeを先に拾う
+    // ?code を先に拾う
     (function(){
       const p = new URLSearchParams(location.search);
-      const code = p.get('code') || '';
-      window.__initialCode = code;
+      window.__initialCode = p.get('code') || '';
     })();
 
-    // iOSショートカット起動リンクを最優先で作る（GAS応答待ちゼロ）
+    // iOSショートカット起動リンクを最優先で出す（GAS応答待ちなし）
     document.addEventListener('DOMContentLoaded', () => {
       const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-      if (!isIOS) return;
-      const a = document.getElementById('iosScanLink');
-      if (!a) return;
-      const base = location.origin + location.pathname;
-      const href = `shortcuts://run-shortcut?name=${encodeURIComponent(window.SHORTCUT_NAME)}&input=text&text=${encodeURIComponent(base)}`;
-      a.href = href;
-      a.style.display = 'inline-block';
+      const btn = document.getElementById('iosScanBtn');
+      if (isIOS && btn) {
+        const base = location.origin + location.pathname;
+        const href = `shortcuts://run-shortcut?name=${encodeURIComponent(window.SHORTCUT_NAME)}&input=text&text=${encodeURIComponent(base)}`;
+        btn.style.display = '';
+        btn.addEventListener('click', ()=>{ location.href = href; });
+      }
     });
 
-    // GASを軽くウォームアップ（非同期・結果捨て）
-    (function(){
-      try { new Image().src = window.GAS_ENDPOINT + '?mode=health&ts=' + Date.now(); } catch {}
-    })();
+    // GASウォームアップ（非同期）
+    (function(){ try { new Image().src = window.GAS_ENDPOINT + '?mode=health&ts=' + Date.now(); } catch {} })();
   </script>
 </head>
 <body>
@@ -76,8 +74,8 @@
     <button class="btn primary" id="searchBtn">検索</button>
     <button class="btn" id="plusBtn">+1</button>
     <button class="btn" id="minusBtn">-1</button>
-    <!-- iOSのみ即表示に切替：a要素（hrefは上の軽量スクリプトで即付与） -->
-    <a class="btn" id="iosScanLink" style="display:none">ショートカットでスキャン</a>
+    <!-- iOSのみ：ショートカット起動 -->
+    <button class="btn" id="iosScanBtn" style="display:none">ショートカットでスキャン</button>
   </div>
 
   <div id="status" class="row muted"></div>
@@ -90,17 +88,22 @@
     </details>
   </div>
 
-  <!-- 本体JSは defer で後追い：初期描画をブロックしない -->
+  <!-- 本体ロジック（defer で初期描画を阻害しない） -->
   <script defer>
-    const DEBUG = false; // 必要時だけ true
-
-    // 小ユーティリティ
     const qs = (sel, el=document) => el.querySelector(sel);
-    function showDebug(raw){ if(!DEBUG) return; const el=qs('#debugRaw'); try{ el.textContent = typeof raw==='string' ? raw : JSON.stringify(raw,null,2);}catch{ el.textContent=String(raw);} }
+    function showDebug(raw){ if(!window.DEBUG) return; const el=qs('#debugRaw'); try{ el.textContent = typeof raw==='string' ? raw : JSON.stringify(raw,null,2);}catch{ el.textContent=String(raw);} }
     function setStatus(text, type='muted'){ const el=qs('#status'); el.textContent=text||''; el.className=`row ${type==='err'?'err':type==='ok'?'ok':'muted'}`; }
     function refocus(){ const i=qs('#codeInput'); setTimeout(()=>{i.focus(); i.select();},0); }
 
-    // GASクライアント（初期全件ロードなし／必要時だけ通信）
+    // 在庫バッジを即時更新（楽観的反映用）
+    function setBadgeStock(badgeEl, next) {
+      const v = Math.max(0, Number(next || 0));
+      badgeEl.dataset.stock = String(v);
+      badgeEl.textContent = String(v);
+      badgeEl.className = (v <= 0) ? 'stock badge zero' : (v <= 2) ? 'stock badge low' : 'stock badge';
+    }
+
+    // GASクライアント（必要時のみ通信）
     function createGasClient(endpoint) {
       let last = ''; const listeners = new Set(); let polling = false;
 
@@ -119,20 +122,20 @@
       async function adjust(code, delta){
         const rec = (await fetchJSON(`${endpoint}?mode=adjust&code=${encodeURIComponent(String(code))}&delta=${encodeURIComponent(delta)}`))[0] || null;
         if (rec && rec.updated_at) last = String(rec.updated_at);
-        startPolling(); notify(rec ? [rec] : []); return rec;
+        startPolling(); notify(rec ? [rec] : []); return rec; // ★レコードを返す
       }
       function startPolling(){
         if (polling) return; polling = true;
         (async function loop(){
           while (polling){
-            try {
+            try{
               const diff = await fetchJSON(`${endpoint}?mode=changes&since=${encodeURIComponent(last)}`);
               if (diff.length){
                 diff.sort((a,b)=>String(a.updated_at).localeCompare(String(b.updated_at)));
                 last = String(diff[diff.length-1].updated_at || last);
                 notify(diff);
               }
-            } catch {}
+            }catch{}
             await new Promise(r=>setTimeout(r, 1200));
           }
         })();
@@ -142,7 +145,7 @@
 
     const client = createGasClient(window.GAS_ENDPOINT);
 
-    // 表示ロジック
+    // 表示系
     let currentCode = '';
     function stockBadgeClass(stock){
       if (!isFinite(stock) || stock <= 0) return 'stock badge zero';
@@ -156,16 +159,25 @@
         <div><button id="createBtn" class="btn">在庫0で新規作成</button></div>
       `;
       qs('#createBtn').onclick = async () => {
-        try { await client.adjust(code, +1); await client.adjust(code, -1);
-          const rec = await client.get(code); if (rec) renderList([rec]); setStatus('新規作成しました（在庫0）', 'ok');
-        } catch { setStatus('新規作成に失敗しました。', 'err'); } finally { refocus(); }
+        try {
+          await client.adjust(code, +1);
+          await client.adjust(code, -1);
+          const rec = await client.get(code);
+          if (rec) renderList([rec]);
+          setStatus('新規作成しました（在庫0）', 'ok');
+        } catch { setStatus('新規作成に失敗しました。', 'err'); }
+        finally { refocus(); }
       };
     }
     function renderList(list){
       const box = qs('#result'); box.innerHTML = '';
       if (!list || list.length === 0){ renderEmpty(qs('#codeInput').value.trim()); return; }
-      const it = list[0]; const code = it.code ?? ''; const name = it.name ?? ''; const stock = Number(it.stock ?? 0);
+      const item = list[0];
+      const code = item.code ?? '';
+      const name = item.name ?? '';
+      const stock = Number(item.stock ?? 0);
       currentCode = String(code);
+
       const wrap = document.createElement('div');
       wrap.className = 'item';
       wrap.innerHTML = `
@@ -173,25 +185,49 @@
           <div><strong>${name || '(名称未設定)'}</strong></div>
           <div class="muted">code: <span class="code">${code}</span></div>
         </div>
-        <div class="${stockBadgeClass(stock)}" data-stock="${isFinite(stock)?stock:0}">${isFinite(stock)?stock:0}</div>
+        <div class="${stockBadgeClass(stock)}" data-stock="${isFinite(stock) ? stock : 0}">${isFinite(stock) ? stock : 0}</div>
         <div>
           <button class="btn" data-delta="-1" data-code="${code}">-1</button>
           <button class="btn" data-delta="+1" data-code="${code}">+1</button>
-        </div>`;
+        </div>
+      `;
       box.appendChild(wrap);
 
       const minusBtn = wrap.querySelector('button[data-delta="-1"]');
-      if ((isFinite(stock)?stock:0) <= 0) { minusBtn.disabled = true; minusBtn.classList.add('warn'); }
+      if ((isFinite(stock) ? stock : 0) <= 0) { minusBtn.disabled = true; minusBtn.classList.add('warn'); }
 
-      box.onclick = async (ev)=>{
+      // ★ 在庫ボタン：楽観的即時反映
+      box.onclick = async (ev) => {
         const btn = ev.target.closest('button.btn'); if (!btn) return;
-        const code = btn.getAttribute('data-code'); const delta = parseFloat(btn.getAttribute('data-delta'));
-        const stockEl = btn.closest('.item').querySelector('.stock.badge, .stock.badge.low, .stock.badge.zero');
-        const current = Number(stockEl?.dataset.stock ?? 0);
-        if (delta < 0 && current <= 0){ setStatus('在庫は 0 未満にできません。', 'err'); return; }
-        try { setStatus(`在庫を ${delta>0?'+':''}${delta} します…`);
-          await client.adjust(code, delta); const rec = await client.get(code); if (rec) renderList([rec]); setStatus('在庫を更新しました。', 'ok');
-        } catch { setStatus('在庫更新時にエラーが発生しました。', 'err'); } finally { refocus(); }
+        const code = btn.getAttribute('data-code');
+        const delta = parseFloat(btn.getAttribute('data-delta'));
+
+        const badgeEl = wrap.querySelector('.stock.badge, .stock.badge.low, .stock.badge.zero');
+        const before  = Number(badgeEl?.dataset.stock ?? 0);
+        if (delta < 0 && before <= 0) { setStatus('在庫はこれ以上減らせません（0未満禁止）', 'err'); return; }
+
+        const optimistic = Math.max(0, before + delta);
+        setBadgeStock(badgeEl, optimistic);
+        setStatus(`在庫を ${delta>0?'+':''}${delta}（同期中）…`);
+
+        // マイナスボタン活性/非活性も即時反映
+        if (minusBtn) {
+          if (optimistic <= 0) { minusBtn.disabled = true; minusBtn.classList.add('warn'); }
+          else { minusBtn.disabled = false; minusBtn.classList.remove('warn'); }
+        }
+
+        try {
+          const rec = await client.adjust(code, delta); // レコードが返る
+          if (rec) setBadgeStock(badgeEl, Number(rec.stock || optimistic));
+          setStatus('在庫を更新しました。', 'ok');
+        } catch {
+          setBadgeStock(badgeEl, before);
+          if (minusBtn) {
+            if (before <= 0) { minusBtn.disabled = true; minusBtn.classList.add('warn'); }
+            else { minusBtn.disabled = false; minusBtn.classList.remove('warn'); }
+          }
+          setStatus('在庫更新に失敗しました。', 'err');
+        } finally { refocus(); }
       };
     }
 
@@ -199,39 +235,84 @@
     (function init(){
       const input = qs('#codeInput'); const btn = qs('#searchBtn');
 
-      // Enter/Tab で検索（HIDスキャナでも即応）
-      input.addEventListener('keydown', e=>{ if (e.key==='Enter'||e.key==='Tab'){ e.preventDefault(); btn.click(); } });
+      // Enter/Tab で検索
+      input.addEventListener('keydown', (e)=>{ if (e.key === 'Enter' || e.key === 'Tab'){ e.preventDefault(); btn.click(); } });
 
       btn.addEventListener('click', async ()=>{
-        const code = input.value.trim(); if (!code){ setStatus('code が空です。バーコードを読み取ってください。', 'err'); return; }
-        // まず即プレースホルダ描画（体感を速く）
+        const code = input.value.trim();
+        if (!code){ setStatus('code が空です。バーコードを読み取ってください。', 'err'); return; }
+
+        // 即“検索中”プレースホルダ（体感UP）
         qs('#result').innerHTML = `
           <div class="item">
-            <div><div><strong>(検索中)</strong></div><div class="muted">code: <span class="code">${code}</span></div></div>
-            <div class="stock badge" data-stock="0">…</div><div></div>
+            <div>
+              <div><strong>(検索中)</strong></div>
+              <div class="muted">code: <span class="code">${code}</span></div>
+            </div>
+            <div class="stock badge" data-stock="0">…</div>
+            <div></div>
           </div>`;
         setStatus('検索中…');
-        try { const rec = await client.get(code);
-          if (rec){ renderList([rec]); setStatus('検索完了（1件）', 'ok'); client.startPolling(); }
+
+        try {
+          const rec = await client.get(code);
+          if (rec) { renderList([rec]); setStatus('検索完了（1件）', 'ok'); client.startPolling(); }
           else { renderEmpty(code); setStatus('該当なし', 'muted'); }
         } catch { setStatus('検索に失敗しました。', 'err'); }
         finally { refocus(); }
       });
 
-      // 差分で表示中アイテムが動いたら更新
+      // 上部 +1/-1 も楽観的に
+      qs('#plusBtn').addEventListener('click', async ()=>{
+        const code = input.value.trim();
+        if (!code){ setStatus('先に検索またはスキャンしてください。', 'err'); return; }
+        const badgeEl = qs('.stock.badge, .stock.badge.low, .stock.badge.zero');
+        const before  = Number(badgeEl?.dataset.stock ?? 0);
+        if (badgeEl) setBadgeStock(badgeEl, before + 1);
+        setStatus('在庫を +1（同期中）…');
+        try {
+          const rec = await client.adjust(code, +1);
+          if (rec && badgeEl) setBadgeStock(badgeEl, Number(rec.stock || before + 1));
+          setStatus('在庫を +1 しました。', 'ok');
+        } catch {
+          if (badgeEl) setBadgeStock(badgeEl, before);
+          setStatus('在庫更新に失敗しました。', 'err');
+        } finally { refocus(); }
+      });
+
+      qs('#minusBtn').addEventListener('click', async ()=>{
+        const code = input.value.trim();
+        if (!code){ setStatus('先に検索またはスキャンしてください。', 'err'); return; }
+        const badgeEl = qs('.stock.badge, .stock.badge.low, .stock.badge.zero');
+        const before  = Number(badgeEl?.dataset.stock ?? 0);
+        if (before <= 0){ setStatus('在庫は 0 未満にできません。', 'err'); return; }
+        if (badgeEl) setBadgeStock(badgeEl, before - 1);
+        setStatus('在庫を -1（同期中）…');
+        try {
+          const rec = await client.adjust(code, -1);
+          if (rec && badgeEl) setBadgeStock(badgeEl, Number(rec.stock || before - 1));
+          setStatus('在庫を -1 しました。', 'ok');
+        } catch {
+          if (badgeEl) setBadgeStock(badgeEl, before);
+          setStatus('在庫更新に失敗しました。', 'err');
+        } finally { refocus(); }
+      });
+
+      // 差分購読：表示中アイテムの外部更新を反映
       client.subscribe(list => {
         if (!currentCode) return;
-        const rec = list.find(r=> String(r.code) === String(currentCode));
+        const rec = list.find(r => String(r.code) === String(currentCode));
         if (rec) renderList([rec]);
       });
 
-      // 戻り時は即検索（GASの全件ロード待ち無し）
+      // ?code= で戻ってきたら即検索（初期全件ロードはしない）
       const fromURL = window.__initialCode;
       if (fromURL){ input.value = fromURL; btn.click(); } else { setTimeout(()=> input.focus(), 0); }
     })();
   </script>
 </body>
 </html>
+
 
 
 
