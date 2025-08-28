@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>病院在庫管理（カメラスキャン対応）</title>
+  <title>病院在庫管理（外部スキャン連携）</title>
   <style>
     :root { --gap: 12px; }
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; padding: 16px; line-height: 1.6; }
@@ -13,7 +13,7 @@
     .ok { color: #0a7b27; font-weight: 600; }
     .err { color: #b00020; font-weight: 600; }
     .code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: #f5f5f7; padding: 2px 6px; border-radius: 4px; }
-    .btn { padding: 10px 14px; border: 1px solid #ddd; border-radius: 8px; background: #fafafa; cursor: pointer; }
+    .btn { padding: 10px 14px; border: 1px solid #ddd; border-radius: 8px; background: #fafafa; cursor: pointer; text-decoration:none; color:inherit; display:inline-block; }
     .btn:active { transform: translateY(1px); }
     .btn.primary { background: #1a73e8; border-color: #1a73e8; color: #fff; }
     .btn.warn { background: #ffe9e9; border-color: #f3b4b4; color: #b00020; }
@@ -21,21 +21,13 @@
     .grid { display: grid; gap: 10px; }
     .actions { display: flex; gap: 10px; flex-wrap: wrap; }
     .item { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; padding: 10px; border: 1px solid #eee; border-radius: 10px; }
-
     .stock.badge { min-width: 64px; text-align: center; padding: 6px 8px; border-radius: 999px; border: 1px solid #ddd; background: #f7f7f9; font-weight: 700; }
     .stock.badge.low { background: #fff8e1; border-color: #ffe082; }
     .stock.badge.zero { background: #ffebee; border-color: #ffcdd2; color: #b00020; }
-
-    #cameraWrap { display:none; position: relative; border:1px solid #eee; border-radius: 12px; overflow:hidden; background:#000; }
-    #preview { width: 100%; height: auto; display:block; background:#000; }
-    #scanLine {
-      position:absolute; left:0; right:0; top:50%; height:2px; background:rgba(0,255,0,0.8);
-      transform: translateY(-50%); animation: scan 2s linear infinite;
-    }
-    @keyframes scan { 0%{ top:15%; } 50%{ top:85%; } 100%{ top:15%; } }
-
     details summary { cursor: pointer; }
     #result-empty { padding: 8px 0; }
+    .card { border:1px solid #eee; border-radius:10px; padding:12px; }
+    .apps { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
   </style>
 </head>
 <body>
@@ -43,20 +35,27 @@
 
   <div class="row">
     <label for="codeInput">バーコード（code）</label><br />
-    <input id="codeInput" type="text" inputmode="numeric" placeholder="例: 4901070303885" autocomplete="off" />
+    <input id="codeInput" type="text" inputmode="numeric" placeholder="例: 4901070303885"
+           autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
   </div>
 
   <div class="row actions">
     <button class="btn primary" id="searchBtn">検索</button>
-    <button class="btn" id="scanToggleBtn">カメラでスキャン開始</button>
     <button class="btn" id="plusBtn">+1</button>
     <button class="btn" id="minusBtn">-1</button>
   </div>
 
-  <!-- カメラプレビュー -->
-  <div id="cameraWrap" class="row">
-    <video id="preview" playsinline muted></video>
-    <div id="scanLine"></div>
+  <!-- 外部スキャンアプリから起動 → 戻りで ?code=xxx を受ける -->
+  <div class="row card">
+    <strong>外部スキャンアプリで読み取る（スキャン後このページに戻ります）</strong>
+    <div class="apps">
+      <a id="btn-android" class="btn" href="#">Android: ZXing系</a>
+      <a id="btn-ios-p2s" class="btn" href="#">iOS: Pic2Shop</a>
+      <a id="btn-ios-qrf" class="btn" href="#">iOS: Qrafter</a>
+    </div>
+    <div class="muted" style="margin-top:6px">
+      ※対応アプリが未インストールの場合はストアへ誘導されることがあります
+    </div>
   </div>
 
   <div id="status" class="row muted"></div>
@@ -71,7 +70,7 @@
 
   <script>
     // ===== 設定 =====
-    // ★ デプロイ済み GAS /exec の URL
+    // ★ デプロイ済み GAS /exec の URL（あなたのURLで設定済み）
     const GAS_ENDPOINT = 'https://script.google.com/macros/s/AKfycbzZ-R4mi7duu9Nhr2q4ZmXRS0JQ7tjW4xc6l37fzPDlW5RTPHdr07KObqjRaHQ733m3Og/exec';
 
     // ===== ユーティリティ =====
@@ -137,6 +136,7 @@
       const minusBtn = wrap.querySelector('button[data-delta="-1"]');
       if ((isFinite(stock) ? stock : 0) <= 0) { minusBtn.disabled = true; minusBtn.classList.add('warn'); }
 
+      // 在庫ボタン
       box.onclick = async (ev) => {
         const btn = ev.target.closest('button.btn'); if (!btn) return;
         const code = btn.getAttribute('data-code');
@@ -158,7 +158,7 @@
       };
     }
 
-    // ===== GAS クライアント（アダプティブポーリング＋コアレッサ）=====
+    // ===== GAS クライアント（アダプティブ・ポーリング＋コアレッサ）=====
     function createGasClient({ endpoint, activeMs = 1000, idleMs = 5000 }) {
       const map = new Map();   let last = '';  const listeners = new Set();
       const queue = new Map(); let flushTimer = null;
@@ -263,15 +263,18 @@
 
     const client = createGasClient({ endpoint: GAS_ENDPOINT, activeMs: 1000, idleMs: 5000 });
 
-    // ===== 画面初期化 =====
+    // ===== 起動処理 =====
     (async function init(){
       if (!GAS_ENDPOINT){ setStatus('GAS の URL（GAS_ENDPOINT）が未設定です。', 'err'); return; }
       try { await client.init(); } catch { setStatus('初期データの取得に失敗しました。', 'err'); }
 
       const input = qs('#codeInput');
       const btn = qs('#searchBtn');
-      input.addEventListener('keydown', (e)=>{ if (e.key === 'Enter') btn.click(); });
 
+      // Enter/Tab で検索（HIDスキャナ対応）
+      input.addEventListener('keydown', (e)=>{ if (e.key === 'Enter' || e.key === 'Tab'){ e.preventDefault(); btn.click(); } });
+
+      // 検索ボタンクリック
       btn.addEventListener('click', async ()=>{
         const code = input.value.trim();
         if (!code){ setStatus('code が空です。バーコードを読み取ってください。', 'err'); return; }
@@ -281,6 +284,7 @@
         refocus();
       });
 
+      // ±1 ボタン
       qs('#plusBtn').addEventListener('click', async ()=>{
         const code = input.value.trim();
         if (!code){ setStatus('先に検索またはスキャンしてください。', 'err'); return; }
@@ -300,6 +304,7 @@
         setStatus('在庫を -1 しました。', 'ok');
       });
 
+      // 差分購読：表示中の品目が更新されたら再描画
       client.subscribe(list => {
         if (!currentCode) return;
         const rec = list.find(r => String(r.code) === String(currentCode));
@@ -312,6 +317,7 @@
         }
       });
 
+      // URL ?code=XXXX で自動検索
       setTimeout(()=> input.focus(), 0);
       const fromURL = getQueryParam('code');
       if (fromURL){
@@ -320,101 +326,29 @@
         renderList(rec ? [rec] : []);
         setStatus(rec ? '検索完了（1件）' : '該当なし', rec ? 'ok' : 'muted');
       }
+
+      // --- 外部アプリ deep link を生成 ---
+      const base = location.origin + location.pathname;              // 戻り先（このページ）
+      const retTpl = `${base}?code={CODE}`;
+
+      // Android（ZXing系）優先URL + 旧式HTTPフォールバック
+      const androidUrl = `zxing://scan/?ret=${encodeURIComponent(retTpl)}&SCAN_FORMATS=EAN_13,UPC_A,QR_CODE`;
+      const androidAlt = `http://zxing.appspot.com/scan?ret=${encodeURIComponent(retTpl)}&SCAN_FORMATS=EAN_13,UPC_A`;
+
+      // iOS: Pic2Shop（EAN プレースホルダ）
+      const iosPic2Shop = `pic2shop://scan?callback=${encodeURIComponent(base + '?code=EAN')}`;
+
+      // iOS: Qrafter（x-callback-url、{CODE} 部分が置換される）
+      const iosQrafter = `qrafter://x-callback-url/scan?x-success=${encodeURIComponent(base + '?code={CODE}')}&browser=external`;
+
+      const a = document.getElementById('btn-android');
+      a.href = androidUrl;
+      // クリック後に一瞬フォールバックURLも用意（起動失敗時の保険）
+      a.addEventListener('click', () => { setTimeout(()=>{ a.href = androidAlt; }, 120); });
+
+      document.getElementById('btn-ios-p2s').href = iosPic2Shop;
+      document.getElementById('btn-ios-qrf').href = iosQrafter;
     })();
-  </script>
-
-  <!-- ===== ZXing（UMD） ===== -->
-  <script src="https://unpkg.com/@zxing/library@0.19.1/build/zxing.min.js"></script>
-  <script>
-    // ===== カメラ・スキャン制御（黒画面対策：先に getUserMedia で映像を出す） =====
-    let codeReader = null;
-    let scanning = false;
-    let lastHitAt = 0;
-    let currentStream = null;
-
-    const $wrap = document.getElementById('cameraWrap');
-    const $video = document.getElementById('preview');
-    const $toggle = document.getElementById('scanToggleBtn');
-    const $input  = document.getElementById('codeInput');
-    const $search = document.getElementById('searchBtn');
-
-    function vibrate(ms=60){ if (navigator.vibrate) try{ navigator.vibrate(ms); }catch{} }
-
-    async function listVideoInputs() {
-      const devs = await navigator.mediaDevices.enumerateDevices();
-      return devs.filter(d => d.kind === 'videoinput');
-    }
-    function preferBack(devs) {
-      const low = s => (s || '').toLowerCase();
-      return devs.find(d => /back|rear|environment/.test(low(d.label))) || devs[0];
-    }
-
-    async function startScan() {
-      if (scanning) return;
-      scanning = true;
-      $wrap.style.display = 'block';
-      $toggle.textContent = 'スキャン停止';
-
-      if (!codeReader) codeReader = new ZXing.BrowserMultiFormatReader();
-
-      try {
-        // 1) カメラ列挙 → 背面っぽいものを選択
-        const inputs = await listVideoInputs();
-        if (!inputs.length) throw new Error('カメラが見つかりません');
-        const picked = preferBack(inputs);
-
-        // 2) まず video に確実に映像を出す（黒画面対策の要）
-        const constraints = {
-          video: picked
-            ? { deviceId: { exact: picked.deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }
-            : { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
-          audio: false
-        };
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
-        currentStream = stream;
-        $video.srcObject = stream;
-        await $video.play(); // 自動再生させる（iOS対策で muted/playsinline 済）
-
-        // 3) 同じ stream を ZXing に渡してデコード開始
-        await codeReader.decodeFromStream(stream, $video, (result, err) => {
-          if (result) {
-            const text = String(result.getText() || '').trim();
-            const now = Date.now();
-            if (!text) return;
-            if (now - lastHitAt < 800) return; // 連続ヒット抑制
-            lastHitAt = now;
-            vibrate();
-            $input.value = text;
-            $search.click();
-          }
-          if (err && !(err instanceof ZXing.NotFoundException)) {
-            console.warn(err);
-          }
-        });
-
-      } catch (e) {
-        console.error(e);
-        setStatus(`カメラ起動エラー: ${e.name || e.message}`, 'err');
-        stopScan();
-      }
-    }
-
-    function stopScan(){
-      scanning = false;
-      $wrap.style.display = 'none';
-      $toggle.textContent = 'カメラでスキャン開始';
-      try { if (codeReader) codeReader.reset(); } catch {}
-      try {
-        if (currentStream) {
-          currentStream.getTracks().forEach(t => t.stop());
-          currentStream = null;
-        }
-      } catch {}
-    }
-
-    $toggle.addEventListener('click', ()=>{ if (scanning) stopScan(); else startScan(); });
-    document.addEventListener('visibilitychange', ()=>{ if (document.hidden) stopScan(); });
-    window.addEventListener('pagehide', ()=> stopScan());
   </script>
 </body>
 </html>
