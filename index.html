@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>病院在庫管理（iOSショートカット・高速＆即時反映）</title>
+  <title>病院在庫管理（高速＆即時反映）</title>
 
   <!-- GAS接続の事前あたため -->
   <link rel="preconnect" href="https://script.google.com">
@@ -32,10 +32,10 @@
     #result-empty { padding: 8px 0; }
   </style>
 
-  <!-- クリティカル：初期コード読込＆ショートカットリンク即生成 -->
+  <!-- クリティカル：初期コード読込＆ショートカット起動リンク（即生成） -->
   <script>
     // ★ あなたの GAS /exec
-    window.GAS_ENDPOINT = 'https://script.google.com/macros/s/AKfycbytjlc8ptTKYyskhIs_p3IZOlLAhIAyeVg23z7Z26ja0xOznMkxHlyyLv59U09mQjsd/exec';
+    window.GAS_ENDPOINT = 'https://script.google.com/macros/s/AKfycbzy0q5krVdL0RObMKCU3ni3VOZeXqdQdik0ruKihMnTnT0c_550JHhOI5xusAjpAcwo/exec';
     window.SHORTCUT_NAME = 'ScanToWeb';
     window.DEBUG = false; // trueで生レスポンス表示
 
@@ -45,7 +45,7 @@
       window.__initialCode = p.get('code') || '';
     })();
 
-    // iOSショートカット起動リンクを最優先で出す（GAS応答待ちなし）
+    // iOSショートカット起動ボタン：GAS応答待ちなしで表示
     document.addEventListener('DOMContentLoaded', () => {
       const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
       const btn = document.getElementById('iosScanBtn');
@@ -88,20 +88,25 @@
     </details>
   </div>
 
-  <!-- 本体ロジック（defer で初期描画を阻害しない） -->
+  <!-- 本体ロジック（defer） -->
   <script defer>
     const qs = (sel, el=document) => el.querySelector(sel);
     function showDebug(raw){ if(!window.DEBUG) return; const el=qs('#debugRaw'); try{ el.textContent = typeof raw==='string' ? raw : JSON.stringify(raw,null,2);}catch{ el.textContent=String(raw);} }
     function setStatus(text, type='muted'){ const el=qs('#status'); el.textContent=text||''; el.className=`row ${type==='err'?'err':type==='ok'?'ok':'muted'}`; }
     function refocus(){ const i=qs('#codeInput'); setTimeout(()=>{i.focus(); i.select();},0); }
 
-    // 在庫バッジを即時更新（楽観的反映用）
+    // ★ 楽観的表示＋チラつき防止用
     function setBadgeStock(badgeEl, next) {
       const v = Math.max(0, Number(next || 0));
       badgeEl.dataset.stock = String(v);
       badgeEl.textContent = String(v);
-      badgeEl.className = (v <= 0) ? 'stock badge zero' : (v <= 2) ? 'stock badge low' : 'stock badge';
+      badgeEl.className = (v <= 0) ? 'stock badge zero'
+                      : (v <= 2) ? 'stock badge low'
+                                  : 'stock badge';
     }
+    // モノトニック更新ガード：自分が直近で目標値をセットした code は“それ未満のサーバ値”を一定時間無視
+    const PENDING_WINDOW_MS = 1500;
+    const pendingLocal = new Map();  // Map<string, {target:number, until:number}>
 
     // GASクライアント（必要時のみ通信）
     function createGasClient(endpoint) {
@@ -122,7 +127,7 @@
       async function adjust(code, delta){
         const rec = (await fetchJSON(`${endpoint}?mode=adjust&code=${encodeURIComponent(String(code))}&delta=${encodeURIComponent(delta)}`))[0] || null;
         if (rec && rec.updated_at) last = String(rec.updated_at);
-        startPolling(); notify(rec ? [rec] : []); return rec; // ★レコードを返す
+        startPolling(); notify(rec ? [rec] : []); return rec; // レコードを返す
       }
       function startPolling(){
         if (polling) return; polling = true;
@@ -196,7 +201,7 @@
       const minusBtn = wrap.querySelector('button[data-delta="-1"]');
       if ((isFinite(stock) ? stock : 0) <= 0) { minusBtn.disabled = true; minusBtn.classList.add('warn'); }
 
-      // ★ 在庫ボタン：楽観的即時反映
+      // 在庫ボタン：楽観的即時反映＋モノトニックガード
       box.onclick = async (ev) => {
         const btn = ev.target.closest('button.btn'); if (!btn) return;
         const code = btn.getAttribute('data-code');
@@ -210,14 +215,16 @@
         setBadgeStock(badgeEl, optimistic);
         setStatus(`在庫を ${delta>0?'+':''}${delta}（同期中）…`);
 
-        // マイナスボタン活性/非活性も即時反映
         if (minusBtn) {
           if (optimistic <= 0) { minusBtn.disabled = true; minusBtn.classList.add('warn'); }
           else { minusBtn.disabled = false; minusBtn.classList.remove('warn'); }
         }
 
+        // ★ 目標値を記録（猶予内はこれ未満のサーバ値を無視）
+        pendingLocal.set(code, { target: optimistic, until: Date.now() + PENDING_WINDOW_MS });
+
         try {
-          const rec = await client.adjust(code, delta); // レコードが返る
+          const rec = await client.adjust(code, delta); // サーバの最新
           if (rec) setBadgeStock(badgeEl, Number(rec.stock || optimistic));
           setStatus('在庫を更新しました。', 'ok');
         } catch {
@@ -227,7 +234,10 @@
             else { minusBtn.disabled = false; minusBtn.classList.remove('warn'); }
           }
           setStatus('在庫更新に失敗しました。', 'err');
-        } finally { refocus(); }
+        } finally {
+          pendingLocal.delete(code);
+          refocus();
+        }
       };
     }
 
@@ -242,7 +252,7 @@
         const code = input.value.trim();
         if (!code){ setStatus('code が空です。バーコードを読み取ってください。', 'err'); return; }
 
-        // 即“検索中”プレースホルダ（体感UP）
+        // 即プレースホルダ
         qs('#result').innerHTML = `
           <div class="item">
             <div>
@@ -262,7 +272,7 @@
         finally { refocus(); }
       });
 
-      // 上部 +1/-1 も楽観的に
+      // 上部 +1/-1 も楽観的＋ガード
       qs('#plusBtn').addEventListener('click', async ()=>{
         const code = input.value.trim();
         if (!code){ setStatus('先に検索またはスキャンしてください。', 'err'); return; }
@@ -270,6 +280,7 @@
         const before  = Number(badgeEl?.dataset.stock ?? 0);
         if (badgeEl) setBadgeStock(badgeEl, before + 1);
         setStatus('在庫を +1（同期中）…');
+        pendingLocal.set(code, { target: before + 1, until: Date.now() + PENDING_WINDOW_MS });
         try {
           const rec = await client.adjust(code, +1);
           if (rec && badgeEl) setBadgeStock(badgeEl, Number(rec.stock || before + 1));
@@ -277,7 +288,7 @@
         } catch {
           if (badgeEl) setBadgeStock(badgeEl, before);
           setStatus('在庫更新に失敗しました。', 'err');
-        } finally { refocus(); }
+        } finally { pendingLocal.delete(code); refocus(); }
       });
 
       qs('#minusBtn').addEventListener('click', async ()=>{
@@ -288,6 +299,7 @@
         if (before <= 0){ setStatus('在庫は 0 未満にできません。', 'err'); return; }
         if (badgeEl) setBadgeStock(badgeEl, before - 1);
         setStatus('在庫を -1（同期中）…');
+        pendingLocal.set(code, { target: before - 1, until: Date.now() + PENDING_WINDOW_MS });
         try {
           const rec = await client.adjust(code, -1);
           if (rec && badgeEl) setBadgeStock(badgeEl, Number(rec.stock || before - 1));
@@ -295,17 +307,30 @@
         } catch {
           if (badgeEl) setBadgeStock(badgeEl, before);
           setStatus('在庫更新に失敗しました。', 'err');
-        } finally { refocus(); }
+        } finally { pendingLocal.delete(code); refocus(); }
       });
 
-      // 差分購読：表示中アイテムの外部更新を反映
+      // サーバ差分の受信：モノトニックガードでチラつき抑止
       client.subscribe(list => {
         if (!currentCode) return;
         const rec = list.find(r => String(r.code) === String(currentCode));
-        if (rec) renderList([rec]);
+        if (!rec) return;
+
+        const code = String(rec.code);
+        const pend = pendingLocal.get(code);
+        const serverStock = Number(rec.stock || 0);
+
+        if (pend && Date.now() < pend.until && serverStock < pend.target) {
+          // 目標未満＆猶予内 → 無視（チラつき防止）
+          return;
+        }
+        renderList([rec]);
+        if (!pend || serverStock >= pend.target || Date.now() >= pend.until) {
+          pendingLocal.delete(code);
+        }
       });
 
-      // ?code= で戻ってきたら即検索（初期全件ロードはしない）
+      // ?code= で戻ってきたら即検索
       const fromURL = window.__initialCode;
       if (fromURL){ input.value = fromURL; btn.click(); } else { setTimeout(()=> input.focus(), 0); }
     })();
