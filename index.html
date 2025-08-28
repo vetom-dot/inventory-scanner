@@ -291,7 +291,7 @@
     const client = createGasClient({ endpoint: GAS_ENDPOINT, activeMs: 1000, idleMs: 5000 });
 
     (async function init(){
-      if (!GAS_ENDPOINT || GAS_ENDPOINT.includes('YOUR_GAS_WEBAPP_URL')){
+      if (!GAS_ENDPOINT || GAS_ENDPOINT.includes('https://script.google.com/macros/s/AKfycbzZ-R4mi7duu9Nhr2q4ZmXRS0JQ7tjW4xc6l37fzPDlW5RTPHdr07KObqjRaHQ733m3Og/exec')){
         setStatus('GAS の URL（GAS_ENDPOINT）を設定してください。', 'err'); return;
       }
 
