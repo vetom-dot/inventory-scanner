@@ -35,8 +35,8 @@
   <!-- 初期コード読込＆ショートカット起動リンク（即生成） -->
   <script>
     // ★ あなたの GAS /exec
-    window.GAS_ENDPOINT = 'https://script.google.com/macros/s/AKfycby-FombjlHfDPf9FBrjx-EhUmk-hqlpNLvg5GtfrQ3BX7XG-mrIC2YeY7jUgVDfUFc/exec'; // ←差し替え
-    window.SHORTCUT_NAME = 'ScanToWeb'; // ←差し替え
+    window.GAS_ENDPOINT = 'https://script.google.com/macros/s/AKfycby80_bOSTAwaWqxKJgpPLLylsJRLKcxjLnk8sXXeXGKa7xcjQUNHPIaJ86wjTTYf10/exec';
+    window.SHORTCUT_NAME = 'ScanToWeb';
     window.DEBUG = false; // trueで生レスポンス表示
 
     // ?code を先に拾う
@@ -300,7 +300,7 @@
 
     // ===== 起動処理 =====
     (function init(){
-      const input = qs('#codeInput'); const btn = qs('#searchBtn']);
+      const input = qs('#codeInput'); const btn = qs('#searchBtn');
 
       // Enter/Tab で検索
       input.addEventListener('keydown', (e)=>{ if (e.key === 'Enter' || e.key === 'Tab'){ e.preventDefault(); btn.click(); } });
